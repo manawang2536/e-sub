@@ -1,0 +1,978 @@
+const SPREADSHEET_ID = "1BxeMXtrNRCA8l-J9XiYSd7fKYTqxPkazMSWz7esaB-M";
+const UPLOAD_FOLDER_ID = "1oUI_oZ_HuV5BIvw_1yjwpT181gg7vLRu";
+
+// ตัวแปรส่วนกลางสำหรับบันทึกข้อมูล IP และ User-Agent ของคำขอ
+let currentRequestIP = "GAS_API";
+let currentRequestUA = "Google Apps Script Serverless";
+
+// ดึง Spreadsheet ตาม ID หรือใช้แผ่นงานปัจจุบัน
+function getSpreadsheet() {
+  if (typeof SPREADSHEET_ID !== 'undefined' && SPREADSHEET_ID && SPREADSHEET_ID !== "YOUR_SPREADSHEET_ID_HERE") {
+    return SpreadsheetApp.openById(SPREADSHEET_ID);
+  }
+  return SpreadsheetApp.getActiveSpreadsheet();
+}
+
+// ตรวจสอบและสร้างคอลัมน์เซสชันในตาราง users ถ้ายังไม่มี
+function checkUsersSessionColumns(sheet) {
+  if (sheet.getLastColumn() < 13) {
+    sheet.getRange(1, 12).setValue("session_token");
+    sheet.getRange(1, 13).setValue("token_expiry");
+  }
+}
+
+// ฟังก์ชันตรวจสอบเซสชันโทเค็นของผู้ใช้งาน
+function validateSession(ss, sessionToken) {
+  if (!sessionToken || sessionToken === "") return { success: false, message: "กรุณาส่งกุญแจยืนยันตนเซสชัน (session_token)" };
+  
+  const sheet = ss.getSheetByName("users");
+  checkUsersSessionColumns(sheet);
+  
+  const users = getSheetData(ss, "users");
+  const user = users.find(u => String(u.session_token).trim() === String(sessionToken).trim());
+  
+  if (!user) {
+    return { success: false, message: "เซสชันไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่" };
+  }
+  
+  const expiry = Number(user.token_expiry || 0);
+  const now = new Date().getTime();
+  if (now > expiry) {
+    return { success: false, message: "เซสชันหมดอายุแล้ว กรุณาเข้าสู่ระบบใหม่" };
+  }
+  
+  // ยืดอายุของเซสชันชั่วคราวออกไปอีก 2 ชั่วโมงเมื่อมีการใช้งานจริง
+  const newExpiry = now + (2 * 60 * 60 * 1000);
+  const vals = sheet.getDataRange().getValues();
+  for (let i = 1; i < vals.length; i++) {
+    if (String(vals[i][0]) === String(user.id)) {
+      sheet.getRange(i + 1, 13).setValue(String(newExpiry));
+      break;
+    }
+  }
+  
+  return { success: true, user: user };
+}
+
+// จัดการคำขอแบบ GET
+function doGet(e) {
+  if (e && e.parameter) {
+    if (e.parameter.client_ip) currentRequestIP = e.parameter.client_ip;
+    if (e.parameter.user_agent) currentRequestUA = e.parameter.user_agent;
+  }
+  
+  const action = e.parameter.action;
+  let ss;
+  try {
+    ss = getSpreadsheet();
+  } catch(err) {
+    return jsonResponse({ success: false, message: "ไม่สามารถเปิด Spreadsheet ได้ กรุณาตรวจสอบสิทธิ์และ SPREADSHEET_ID: " + err.toString() });
+  }
+
+  // 2. ตรวจสอบความปลอดภัยของเซสชันเมื่อเข้าถึง API ภายใน (ยกเว้น API สาธารณะหน้าแรก)
+  const publicActions = ["getSettings", "getDashboardStats", "getStats"];
+  if (publicActions.indexOf(action) === -1) {
+    const authResult = validateSession(ss, e.parameter.session_token);
+    if (!authResult.success) {
+      return jsonResponse({ success: false, status: 401, message: authResult.message });
+    }
+  }
+  
+  try {
+    switch(action) {
+      case "getSettings":
+        return getSettings(ss);
+      case "getStats":
+      case "getDashboardStats":
+        return getDashboardStats(ss);
+      case "listUsers":
+        return listUsers(ss);
+      case "getReportData":
+        return getReportData(ss, e.parameter.year, e.parameter.term);
+      case "getAnalyticsData":
+        return getAnalyticsData(ss, e.parameter.year, e.parameter.term);
+      case "getReportById":
+        return getReportById(ss, e.parameter.id);
+      case "getTemplate":
+        return getTemplate(ss, e.parameter.id);
+      case "listTemplates":
+        return listTemplates(ss);
+      case "listTerms":
+        return listTerms(ss);
+      case "getActiveTerm":
+        return getActiveTerm(ss);
+      case "listAssignments":
+        return listAssignments(ss);
+      case "listLogs":
+        return listLogs(ss);
+      default:
+        return jsonResponse({ success: false, message: "ไม่พบ Action GET: " + action });
+    }
+  } catch(err) {
+    return jsonResponse({ success: false, message: "เกิดข้อผิดพลาด: " + err.toString() });
+  }
+}
+
+// จัดการคำขอแบบ POST
+function doPost(e) {
+  if (e && e.parameter) {
+    if (e.parameter.client_ip) currentRequestIP = e.parameter.client_ip;
+    if (e.parameter.user_agent) currentRequestUA = e.parameter.user_agent;
+  }
+  
+  const action = e.parameter.action;
+  let ss;
+  try {
+    ss = getSpreadsheet();
+  } catch(err) {
+    return jsonResponse({ success: false, message: "ไม่สามารถเปิด Spreadsheet ได้: " + err.toString() });
+  }
+
+  // 2. ตรวจสอบความปลอดภัยของเซสชันเมื่อเข้าถึง API ภายใน (ยกเว้นเข้าสู่ระบบ)
+  const publicActions = ["login"];
+  if (publicActions.indexOf(action) === -1) {
+    const authResult = validateSession(ss, e.parameter.session_token);
+    if (!authResult.success) {
+      return jsonResponse({ success: false, status: 401, message: authResult.message });
+    }
+  }
+
+  let input;
+  try {
+    input = JSON.parse(e.postData.contents);
+  } catch(err) {
+    return jsonResponse({ success: false, message: "รูปแบบ JSON ไม่ถูกต้อง" });
+  }
+  
+  try {
+    switch(action) {
+      case "login":
+        return login(ss, input.username, input.password);
+      case "saveData":
+        return saveData(ss, input);
+      case "saveConfig":
+        return saveConfig(ss, input);
+      case "saveSettings":
+        return saveSettings(ss, input);
+      case "createUser":
+        return createUser(ss, input);
+      case "updateUser":
+        return updateUser(ss, input);
+      case "deleteUser":
+        return deleteUser(ss, input.id);
+      case "bulkAssignTemplates":
+        return bulkAssignTemplates(ss, input);
+      case "changePassword":
+        return changePassword(ss, input);
+      case "createAssignments":
+        return createAssignments(ss, input);
+      case "deleteReport":
+        return deleteReport(ss, input.id);
+      case "createTerm":
+        return createTerm(ss, input);
+      case "setTermActive":
+        return setTermActive(ss, input.id);
+      case "deleteTerm":
+        return deleteTerm(ss, input.id);
+      case "importUsers":
+        return importUsers(ss, input);
+      default:
+        return jsonResponse({ success: false, message: "ไม่พบ Action POST: " + action });
+    }
+  } catch(err) {
+    return jsonResponse({ success: false, message: "เกิดข้อผิดพลาด: " + err.toString() });
+  }
+}
+
+// === ฟังก์ชันตอบกลับในรูปแบบ JSON ===
+function jsonResponse(data) {
+  return ContentService.createTextOutput(JSON.stringify(data))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+// === ฟังก์ชันช่วยเหลือ: แปลงแผ่นงานเป็น Array ของ Object ===
+function getSheetData(ss, sheetName) {
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return [];
+  const range = sheet.getDataRange();
+  const values = range.getValues();
+  if (values.length <= 1) return [];
+  
+  const headers = values[0];
+  const data = [];
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i];
+    const obj = {};
+    headers.forEach((header, index) => {
+      obj[header] = row[index];
+    });
+    data.push(obj);
+  }
+  return data;
+}
+
+// === ฟังก์ชันการยืนยันตัวตน (Authentication) ===
+function login(ss, username, password) {
+  const sheet = ss.getSheetByName("users");
+  checkUsersSessionColumns(sheet);
+  
+  const users = getSheetData(ss, "users");
+  const user = users.find(u => String(u.username).trim() === String(username).trim());
+  
+  if (!user) {
+    writeLog(ss, "", "login_failed", "users", "", `ชื่อผู้ใช้ไม่ถูกต้อง: ${username}`);
+    return jsonResponse({ success: false, message: "ชื่อผู้ใช้งานหรือรหัสผ่านไม่ถูกต้อง" });
+  }
+  
+  const isMatch = checkPassword(password, user.password_hash);
+  if (isMatch) {
+    // สร้างเซสชันโทเค็นสุ่ม UUID
+    const token = Utilities.getUuid() + "_" + Math.random().toString(36).substr(2, 9);
+    // เซสชันหมดอายุในอีก 2 ชั่วโมง
+    const expiryTime = new Date().getTime() + (2 * 60 * 60 * 1000); 
+    
+    // บันทึกลงตาราง users
+    const vals = sheet.getDataRange().getValues();
+    for (let i = 1; i < vals.length; i++) {
+      if (String(vals[i][0]) === String(user.id)) {
+        sheet.getRange(i + 1, 12).setValue(token);
+        sheet.getRange(i + 1, 13).setValue(String(expiryTime));
+        break;
+      }
+    }
+    
+    writeLog(ss, user.id, "login_success", "users", user.id, `เข้าสู่ระบบสำเร็จ (บทบาท: ${user.role})`);
+    return jsonResponse({
+      success: true,
+      message: "เข้าสู่ระบบสำเร็จ",
+      session_token: token,
+      user: {
+        id: user.id,
+        username: user.username,
+        display_name: user.display_name,
+        email: user.email,
+        role: user.role,
+        template_id: user.template_id,
+        position: user.position,
+        academic_standing: user.academic_standing,
+        department: user.department,
+        session_token: token
+      }
+    });
+  } else {
+    writeLog(ss, "", "login_failed", "users", "", `รหัสผ่านผิดสำหรับผู้ใช้: ${username}`);
+    return jsonResponse({ success: false, message: "ชื่อผู้ใช้งานหรือรหัสผ่านไม่ถูกต้อง" });
+  }
+}
+// ตรวจสอบรหัสผ่าน (รองรับ Plain text และ SHA-256 อย่างง่าย)
+function checkPassword(inputPassword, storedHash) {
+  if (inputPassword === storedHash) return true;
+  // ลองถอดหรือตรวจด้วย SHA-256
+  const hash = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, inputPassword, Utilities.Charset.UTF_8);
+  let hashStr = "";
+  for (let i = 0; i < hash.length; i++) {
+    let byteVal = hash[i];
+    if (byteVal < 0) byteVal += 256;
+    let byteString = byteVal.toString(16);
+    if (byteString.length == 1) byteString = "0" + byteString;
+    hashStr += byteString;
+  }
+  if (hashStr === storedHash) return true;
+  
+  // ตรวจสอบ PHP password_verify (กรณีนำเข้าจาก PHP เดิม)
+  // เนื่องจากใน GAS การเขียน BCrypt ถอดรหัสเต็มรูปแบบอาจใช้เวลานานและซับซ้อนมาก
+  // หากต้องการใช้ BCrypt ต่อบน GAS จำเป็นต้องใช้ไลบรารีภายนอก หรือเปลี่ยนรหัสผ่านใน Google Sheets เป็น SHA-256 หรือข้อความธรรมดาตอนย้ายระบบ
+  // ในที่นี้เราจะพยายามตรวจว่าถ้าเป็น bcrypt hash ($2y$) แล้วถ้าเช็คไม่ได้ แนะนำให้สร้างรหัสผ่านใหม่หรือเก็บเป็น SHA-256
+  return false; 
+}
+// === การจัดการ Settings ===
+function getSettings(ss) {
+  const data = getSheetData(ss, "settings");
+  const settings = {};
+  data.forEach(row => {
+    // พยายามแปลง JSON string กลับเป็น Object
+    try {
+      settings[row.id] = JSON.parse(row.value);
+    } catch(e) {
+      settings[row.id] = row.value;
+    }
+  });
+  return jsonResponse({ success: true, data: settings });
+}
+function saveSettings(ss, input) {
+  const sheet = ss.getSheetByName("settings");
+  const data = sheet.getDataRange().getValues();
+  const keys = data.map(r => r[0]);
+  
+  const entries = Object.entries(input);
+  entries.forEach(([key, val]) => {
+    let valStr = "";
+    if (key === "school_logo" && typeof val === "string" && val.startsWith("data:image")) {
+      valStr = saveBase64ImageToDrive(val, "school_logo.png");
+    } else {
+      valStr = (typeof val === "object") ? JSON.stringify(val) : String(val);
+    }
+    
+    // ถ้าไม่มีการแนบรูปภาพโลโก้ใหม่และส่งมาเป็นค่าว่าง ให้ข้ามการบันทึกทับค่าเก่า
+    if (key === "school_logo" && valStr === "") {
+      return;
+    }
+    
+    const idx = keys.indexOf(key);
+    if (idx !== -1) {
+      sheet.getRange(idx + 1, 2).setValue(valStr);
+    } else {
+      sheet.appendRow([key, valStr]);
+      keys.push(key);
+    }
+  });
+  
+  return jsonResponse({ success: true, message: "บันทึกข้อมูลทั่วไปเรียบร้อย" });
+}
+// === สถิติแดชบอร์ดหน้าแรก ===
+function getDashboardStats(ss) {
+  const records = getSheetData(ss, "supervision_records");
+  const users = getSheetData(ss, "users");
+  
+  const totalEvaluations = records.length;
+  const totalTeachers = users.filter(u => u.role === "teacher").length;
+  
+  let sumScore = 0;
+  records.forEach(r => {
+    sumScore += Number(r.percent || 0);
+  });
+  const avgScore = totalEvaluations > 0 ? (sumScore / totalEvaluations).toFixed(1) : 0;
+  
+  const levelStats = { "ดีมาก": 0, "ดี": 0, "พอใช้": 0, "ปรับปรุง": 0 };
+  records.forEach(r => {
+    const l = String(r.level).trim();
+    if (levelStats.hasOwnProperty(l)) {
+      levelStats[l]++;
+    }
+  });
+  
+  return jsonResponse({
+    success: true,
+    data: {
+      total_evaluations: totalEvaluations,
+      total_teachers: totalTeachers,
+      avg_score: avgScore,
+      levels: levelStats
+    }
+  });
+}
+// === รายชื่อผู้ใช้งาน ===
+function listUsers(ss) {
+  const users = getSheetData(ss, "users");
+  // ซ่อนฟิลด์ที่เป็น password_hash เพื่อความปลอดภัย
+  const safeUsers = users.map(u => {
+    const { password_hash, ...rest } = u;
+    return rest;
+  });
+  return jsonResponse({ success: true, data: safeUsers });
+}
+function createUser(ss, input) {
+  const sheet = ss.getSheetByName("users");
+  const id = new Date().getTime(); // รหัสจำลอง
+  
+  // ทำการ Hash รหัสผ่านด้วย SHA-256
+  const hash = sha256(input.password);
+  
+  const newRow = [
+    id,
+    input.username,
+    hash,
+    input.display_name,
+    input.email,
+    input.role || "teacher",
+    input.template_id || "",
+    input.position || "",
+    input.academic_standing || "",
+    input.department || "",
+    Utilities.formatDate(new Date(), "GMT+7", "yyyy-MM-dd HH:mm:ss")
+  ];
+  sheet.appendRow(newRow);
+  
+  return jsonResponse({ success: true, message: "เพิ่มผู้ใช้งานสำเร็จ" });
+}
+function updateUser(ss, input) {
+  const sheet = ss.getSheetByName("users");
+  const range = sheet.getDataRange();
+  const values = range.getValues();
+  
+  let foundRow = -1;
+  for(let i = 1; i < values.length; i++) {
+    if(String(values[i][0]) === String(input.id)) {
+      foundRow = i + 1;
+      break;
+    }
+  }
+  
+  if (foundRow === -1) {
+    return jsonResponse({ success: false, message: "ไม่พบผู้ใช้ที่ต้องการแก้ไข" });
+  }
+  
+  sheet.getRange(foundRow, 2).setValue(input.username); // username
+  if(input.password) {
+    const hash = sha256(input.password);
+    sheet.getRange(foundRow, 3).setValue(hash); // password_hash
+  }
+  sheet.getRange(foundRow, 4).setValue(input.display_name); // display_name
+  sheet.getRange(foundRow, 5).setValue(input.email); // email
+  sheet.getRange(foundRow, 6).setValue(input.role); // role
+  sheet.getRange(foundRow, 7).setValue(input.template_id || ""); // template_id
+  sheet.getRange(foundRow, 8).setValue(input.position || ""); // position
+  sheet.getRange(foundRow, 9).setValue(input.academic_standing || ""); // academic_standing
+  sheet.getRange(foundRow, 10).setValue(input.department || ""); // department
+  
+  return jsonResponse({ success: true, message: "บันทึกข้อมูลสำเร็จ" });
+}
+function deleteUser(ss, id) {
+  const sheet = ss.getSheetByName("users");
+  const values = sheet.getDataRange().getValues();
+  for(let i = 1; i < values.length; i++) {
+    if(String(values[i][0]) === String(id)) {
+      sheet.deleteRow(i + 1);
+      return jsonResponse({ success: true, message: "ลบผู้ใช้เรียบร้อยแล้ว" });
+    }
+  }
+  return jsonResponse({ success: false, message: "ไม่พบผู้ใช้งาน" });
+}
+function bulkAssignTemplates(ss, input) {
+  const sheet = ss.getSheetByName("users");
+  const values = sheet.getDataRange().getValues();
+  const userIds = input.user_ids.map(id => String(id));
+  const tplId = input.template_id || "";
+  
+  let updateCount = 0;
+  for(let i = 1; i < values.length; i++) {
+    if(userIds.indexOf(String(values[i][0])) !== -1) {
+      sheet.getRange(i + 1, 7).setValue(tplId);
+      updateCount++;
+    }
+  }
+  return jsonResponse({ success: true, message: `อัปเดตรูปแบบแบบประเมินให้กลุ่มครูจำนวน ${updateCount} รายเรียบร้อยแล้ว` });
+}
+function changePassword(ss, input) {
+  const sheet = ss.getSheetByName("users");
+  const values = sheet.getDataRange().getValues();
+  
+  for(let i = 1; i < values.length; i++) {
+    if(String(values[i][0]) === String(input.id)) {
+      const hash = sha256(input.new_password);
+      sheet.getRange(i + 1, 3).setValue(hash);
+      return jsonResponse({ success: true, message: "เปลี่ยนรหัสผ่านเรียบร้อย" });
+    }
+  }
+  return jsonResponse({ success: false, message: "ไม่พบผู้ใช้ที่ต้องการเปลี่ยนรหัสผ่าน" });
+}
+// === บันทึกผลการนิเทศ (Supervision Records) ===
+function getReportData(ss, year, term) {
+  const records = getSheetData(ss, "supervision_records");
+  
+  // กรองตามปีและภาคเรียน (ถ้าส่งพารามิเตอร์มา)
+  let filtered = records;
+  if(year && year !== "") {
+    filtered = filtered.filter(r => String(r.year) === String(year));
+  }
+  if(term && term !== "") {
+    filtered = filtered.filter(r => String(r.term) === String(term));
+  }
+  
+  return jsonResponse({ success: true, data: filtered });
+}
+function getReportById(ss, id) {
+  const records = getSheetData(ss, "supervision_records");
+  const record = records.find(r => String(r.id).trim() === String(id).trim());
+  if (record) {
+    return jsonResponse({ success: true, data: record });
+  }
+  return jsonResponse({ success: false, message: "ไม่พบข้อมูลที่ระบุ" });
+}
+function saveData(ss, input) {
+  const recordSheet = ss.getSheetByName("supervision_records");
+  const id = input.id || "N" + new Date().getTime();
+  
+  // อัปโหลดรูปแนบฝั่ง Google Drive
+  const imgUrl1 = saveBase64ImageToDrive(input.attachedFileBase64_1, `img1_${input.teacher}_${id}.png`);
+  const imgUrl2 = saveBase64ImageToDrive(input.attachedFileBase64_2, `img2_${input.teacher}_${id}.png`);
+  const imgUrl3 = saveBase64ImageToDrive(input.attachedFileBase64_3, `img3_${input.teacher}_${id}.png`);
+  const imgUrl4 = saveBase64ImageToDrive(input.attachedFileBase64_4, `img4_${input.teacher}_${id}.png`);
+  
+  // อัปโหลดรูปลายเซ็นฝั่ง Google Drive
+  const signTeacherUrl = saveBase64ImageToDrive(input.signTeacher, `sig_teacher_${input.teacher}_${id}.png`);
+  const signObserverUrl = saveBase64ImageToDrive(input.signObserver, `sig_observer_${input.observer}_${id}.png`);
+  
+  // เตรียมข้อมูลบันทึกแถวใหม่
+  const newRow = [
+    id,
+    input.term,
+    input.year,
+    input.teacher,
+    input.teacherId || "",
+    input.teacherPosition || "-",
+    input.department,
+    input.subject,
+    input.className,
+    input.date,
+    input.occurrence || "-",
+    input.time || "-",
+    input.observer,
+    input.observerId || "",
+    input.observerPosition || "-",
+    JSON.stringify(input.scores),
+    Number(input.total),
+    Number(input.percent),
+    input.level,
+    input.strengths || "",
+    input.improvements || "",
+    input.suggestions || "",
+    signTeacherUrl,
+    signObserverUrl,
+    imgUrl1,
+    imgUrl2,
+    imgUrl3,
+    imgUrl4,
+    Utilities.formatDate(new Date(), "GMT+7", "yyyy-MM-dd HH:mm:ss")
+  ];
+  
+  recordSheet.appendRow(newRow);
+  
+  // เมื่อบันทึกนิเทศเรียบร้อยแล้ว ให้อัปเดตตารางมอบหมายงานนิเทศ (ถ้ามี) ให้เป็น completed
+  if(input.teacherId) {
+    const assignmentSheet = ss.getSheetByName("supervision_assignments");
+    if (assignmentSheet) {
+      const assVals = assignmentSheet.getDataRange().getValues();
+      for(let i = 1; i < assVals.length; i++) {
+        const obsId = String(assVals[i][1]);
+        const tcId = String(assVals[i][2]);
+        const term = String(assVals[i][3]);
+        const year = String(assVals[i][4]);
+        
+        if (obsId === String(input.observerId) && tcId === String(input.teacherId) && term === String(input.term) && year === String(input.year)) {
+          assignmentSheet.getRange(i + 1, 6).setValue("completed");
+        }
+      }
+    }
+  }
+  
+  writeLog(ss, input.observerId || "", "save_data", "supervision_records", id, `บันทึกข้อมูลการนิเทศครู: ${input.teacher}`);
+  
+  return jsonResponse({ success: true, message: "บันทึกข้อมูลนิเทศเรียบร้อยแล้ว" });
+}
+function deleteReport(ss, id) {
+  const sheet = ss.getSheetByName("supervision_records");
+  const values = sheet.getDataRange().getValues();
+  for(let i = 1; i < values.length; i++) {
+    if(String(values[i][0]) === String(id)) {
+      sheet.deleteRow(i + 1);
+      writeLog(ss, "", "delete_data", "supervision_records", id, `ลบบันทึกการนิเทศรหัส: ${id}`);
+      return jsonResponse({ success: true, message: "ลบบันทึกข้อมูลนิเทศเรียบร้อย" });
+    }
+  }
+  return jsonResponse({ success: false, message: "ไม่พบบันทึกการนิเทศ" });
+}
+// === การจัดการรูปแบบแบบประเมิน (Evaluation Templates) ===
+function listTemplates(ss) {
+  const data = getSheetData(ss, "evaluation_templates");
+  return jsonResponse({ success: true, templates: data });
+}
+function getTemplate(ss, id) {
+  const templates = getSheetData(ss, "evaluation_templates");
+  const template = templates.find(t => String(t.id) === String(id));
+  
+  if (!template) {
+    return jsonResponse({ success: false, message: "ไม่พบรูปแบบประเมิน" });
+  }
+  
+  const items = getSheetData(ss, "evaluation_items");
+  const filteredItems = items
+    .filter(it => String(it.template_id) === String(id))
+    .sort((a,b) => Number(a.sort_order) - Number(b.sort_order));
+    
+  template.items_json = JSON.stringify({ items: filteredItems });
+  return jsonResponse({ success: true, template: template });
+}
+function saveConfig(ss, input) {
+  const templateSheet = ss.getSheetByName("evaluation_templates");
+  const itemsSheet = ss.getSheetByName("evaluation_items");
+  
+  let id = input.id;
+  const name = input.name;
+  const items = input.items || [];
+  
+  if (id) {
+    // อัปเดตเทมเพลตที่มีอยู่แล้ว
+    const tValues = templateSheet.getDataRange().getValues();
+    for (let i = 1; i < tValues.length; i++) {
+      if (String(tValues[i][0]) === String(id)) {
+        templateSheet.getRange(i + 1, 2).setValue(name);
+        break;
+      }
+    }
+    
+    // ลบหัวข้อประเมินย่อยเดิม
+    const itemVals = itemsSheet.getDataRange().getValues();
+    for (let i = itemVals.length - 1; i >= 1; i--) {
+      if (String(itemVals[i][1]) === String(id)) {
+        itemsSheet.deleteRow(i + 1);
+      }
+    }
+  } else {
+    // สร้างเทมเพลตใหม่
+    id = new Date().getTime();
+    templateSheet.appendRow([
+      id,
+      name,
+      Utilities.formatDate(new Date(), "GMT+7", "yyyy-MM-dd HH:mm:ss")
+    ]);
+  }
+  
+  // บันทึกหัวข้อย่อยใหม่
+  items.forEach((item, index) => {
+    itemsSheet.appendRow([
+      new Date().getTime() + "_" + index,
+      id,
+      item.type || "sub",
+      item.text || "",
+      index
+    ]);
+  });
+  
+  return jsonResponse({ success: true, message: "บันทึกรูปแบบแบบประเมินเรียบร้อย" });
+}
+// === การจัดการภาคเรียน (Academic Terms) ===
+function listTerms(ss) {
+  const data = getSheetData(ss, "academic_terms");
+  return jsonResponse({ success: true, data: data });
+}
+function getActiveTerm(ss) {
+  const data = getSheetData(ss, "academic_terms");
+  const active = data.find(t => {
+    const act = String(t.is_active).trim().toLowerCase();
+    return act === "1" || act === "true" || act === "yes";
+  });
+  if(active) {
+    return jsonResponse({ success: true, data: active });
+  } else {
+    return jsonResponse({ success: false, message: "ยังไม่ได้ตั้งค่าภาคเรียนปัจจุบัน" });
+  }
+}
+function createTerm(ss, input) {
+  const sheet = ss.getSheetByName("academic_terms");
+  const checkVals = sheet.getDataRange().getValues();
+  
+  for(let i = 1; i < checkVals.length; i++) {
+    if(String(checkVals[i][1]) === String(input.term) && String(checkVals[i][2]) === String(input.year)) {
+      return jsonResponse({ success: false, message: "ภาคเรียนและปีการศึกษานี้มีในระบบแล้ว" });
+    }
+  }
+  
+  const id = new Date().getTime();
+  const isActVal = input.is_active ? 1 : 0;
+  
+  if (isActVal === 1) {
+    deactivateAllTerms(sheet);
+  }
+  
+  sheet.appendRow([id, input.term, input.year, isActVal]);
+  return jsonResponse({ success: true, message: "เพิ่มภาคเรียนเรียบร้อย" });
+}
+function setTermActive(ss, id) {
+  const sheet = ss.getSheetByName("academic_terms");
+  deactivateAllTerms(sheet);
+  
+  const vals = sheet.getDataRange().getValues();
+  for(let i = 1; i < vals.length; i++) {
+    if(String(vals[i][0]) === String(id)) {
+      sheet.getRange(i + 1, 4).setValue("TRUE");
+      return jsonResponse({ success: true, message: "ตั้งค่าภาคเรียนปัจจุบันเรียบร้อย" });
+    }
+  }
+  return jsonResponse({ success: false, message: "ไม่พบภาคเรียนที่เลือก" });
+}
+function deactivateAllTerms(sheet) {
+  const vals = sheet.getDataRange().getValues();
+  for(let i = 1; i < vals.length; i++) {
+    sheet.getRange(i + 1, 4).setValue(0);
+  }
+}
+function deleteTerm(ss, id) {
+  const sheet = ss.getSheetByName("academic_terms");
+  const vals = sheet.getDataRange().getValues();
+  for(let i = 1; i < vals.length; i++) {
+    if(String(vals[i][0]) === String(id)) {
+      sheet.deleteRow(i + 1);
+      return jsonResponse({ success: true, message: "ลบภาคเรียนเรียบร้อย" });
+    }
+  }
+  return jsonResponse({ success: false, message: "ไม่พบภาคเรียนที่ต้องการลบ" });
+}
+// === มอบหมายงานการนิเทศ (Supervision Assignments) ===
+function listAssignments(ss) {
+  const assignments = getSheetData(ss, "supervision_assignments");
+  const users = getSheetData(ss, "users");
+  
+  const mapped = assignments.map(a => {
+    const teacher = users.find(u => String(u.id) === String(a.teacher_id));
+    return {
+      id: a.id,
+      observer_id: a.observer_id,
+      teacher_id: a.teacher_id,
+      teacher_name: teacher ? teacher.display_name : ("ครู ID: " + a.teacher_id),
+      term: a.term,
+      term_id: a.term,
+      term_name: "ภาคเรียนที่ " + a.term,
+      year: a.year,
+      status: a.status,
+      created_at: a.created_at
+    };
+  });
+  
+  return jsonResponse({ success: true, data: mapped });
+}
+function createAssignments(ss, input) {
+  const sheet = ss.getSheetByName("supervision_assignments");
+  const currentAss = getSheetData(ss, "supervision_assignments");
+  
+  const assignments = input.assignments || []; // Array: { observer_id, teacher_id, term, year }
+  let createdCount = 0;
+  
+  assignments.forEach(item => {
+    // เช็คกรณีมีการมอบหมายงานซ้ำอยู่แล้ว
+    const isDup = currentAss.some(a => 
+      String(a.observer_id) === String(item.observer_id) &&
+      String(a.teacher_id) === String(item.teacher_id) &&
+      String(a.term) === String(item.term) &&
+      String(a.year) === String(item.year)
+    );
+    
+    if(!isDup) {
+      sheet.appendRow([
+        new Date().getTime() + "_" + Math.floor(Math.random() * 1000),
+        item.observer_id,
+        item.teacher_id,
+        item.term,
+        item.year,
+        "pending",
+        Utilities.formatDate(new Date(), "GMT+7", "yyyy-MM-dd HH:mm:ss")
+      ]);
+      createdCount++;
+    }
+  });
+  
+  return jsonResponse({ success: true, message: `บันทึกการมอบหมายงานนิเทศเรียบร้อยแล้ว จำนวน ${createdCount} งาน` });
+}
+// === บันทึกประวัติ (Write Log helper) ===
+function writeLog(ss, userId, action, tableName, rowId, details) {
+  const sheet = ss.getSheetByName("logs");
+  if (!sheet) return;
+  
+  // ตรวจสอบและสร้างหัวข้อในตาราง logs คอลัมน์ H และ I ถ้ายังไม่มี
+  if (sheet.getLastColumn() < 8) {
+    sheet.getRange(1, 8).setValue("ip_address");
+    sheet.getRange(1, 9).setValue("user_agent");
+  }
+  
+  sheet.appendRow([
+    new Date().getTime() + "_" + Math.floor(Math.random() * 100),
+    userId || "",
+    action,
+    tableName || "",
+    rowId || "",
+    details,
+    Utilities.formatDate(new Date(), "GMT+7", "yyyy-MM-dd HH:mm:ss"),
+    currentRequestIP,
+    currentRequestUA
+  ]);
+}
+// === นำเข้าผู้ใช้งานด้วย JSON (Import CSV parsed from frontend) ===
+function importUsers(ss, input) {
+  const sheet = ss.getSheetByName("users");
+  const currentUsers = getSheetData(ss, "users");
+  const usersToImport = input.users || []; // array ของข้อมูลครู
+  
+  let success = 0;
+  let fail = 0;
+  
+  usersToImport.forEach(user => {
+    const exists = currentUsers.some(u => String(u.username).trim() === String(user.username).trim());
+    if (exists || !user.username || !user.password) {
+      fail++;
+    } else {
+      const hash = sha256(user.password);
+      sheet.appendRow([
+        new Date().getTime() + "_" + Math.floor(Math.random() * 1000),
+        user.username,
+        hash,
+        user.display_name,
+        user.email || "",
+        user.role || "teacher",
+        "",
+        user.position || "",
+        user.academic_standing || "",
+        user.department || "",
+        Utilities.formatDate(new Date(), "GMT+7", "yyyy-MM-dd HH:mm:ss")
+      ]);
+      success++;
+    }
+  });
+  
+  return jsonResponse({ success: true, message: `นำเข้าสำเร็จ ${success} ราย, ข้ามบรรทัดที่ซ้ำ/ไม่สมบูรณ์ ${fail} ราย` });
+}
+// === อัปโหลดรูปภาพลง Google Drive และเปิดสิทธิ์แชร์ ===
+function saveBase64ImageToDrive(base64Str, fileName) {
+  if (!base64Str || !base64Str.startsWith("data:image")) return "";
+  
+  const folder = DriveApp.getFolderById(UPLOAD_FOLDER_ID);
+  const match = base64Str.match(/^data:image\/(\w+);base64,(.+)$/);
+  if (!match) return "";
+  
+  const contentType = "image/" + match[1];
+  const rawData = Utilities.base64Decode(match[2]);
+  const blob = Utilities.newBlob(rawData, contentType, fileName);
+  
+  const file = folder.createFile(blob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  
+  // แปลงให้เป็น URL สำหรับแสดงผลรูปภาพโดยตรง (Direct Image Link) เพื่อให้หน้าเว็บนำไปทำ img src ได้โดยไม่ติดหน้าดาวน์โหลด
+  const fileId = file.getId();
+  return "https://drive.google.com/thumbnail?id=" + fileId + "&sz=w1000";
+}
+// === ดึงข้อมูลประวัติกิจกรรม (Logs) ===
+function listLogs(ss) {
+  const logs = getSheetData(ss, "logs");
+  const users = getSheetData(ss, "users");
+  
+  // สร้างแผนผังจับคู่ user_id กับ display_name หรือ username
+  const userMap = {};
+  users.forEach(u => {
+    userMap[String(u.id)] = u.display_name || u.username;
+  });
+  
+  const mappedLogs = logs.map(log => {
+    const userId = String(log.user_id || "");
+    const username = userMap[userId] || (userId === "1" ? "ผู้ดูแลระบบหลัก" : (userId ? "ผู้ใช้งาน ID: " + userId : "ระบบ"));
+    
+    return {
+      id: log.id,
+      user_id: log.user_id || "",
+      username: username,
+      action: log.action || "",
+      description: log.details || "",
+      ip_address: log.ip_address || "GAS_API",
+      user_agent: log.user_agent || "Google Apps Script Serverless",
+      date_formatted: log.created_at || "",
+      created_at: log.created_at || ""
+    };
+  });
+  
+  mappedLogs.reverse();
+  return jsonResponse({ success: true, data: mappedLogs });
+}
+// SHA-256 function สำหรับสร้าง Hash ของรหัสผ่าน
+function sha256(input) {
+  const hash = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, input, Utilities.Charset.UTF_8);
+  let hashStr = "";
+  for (let i = 0; i < hash.length; i++) {
+    let byteVal = hash[i];
+    if (byteVal < 0) byteVal += 256;
+    let byteString = byteVal.toString(16);
+    if (byteString.length == 1) byteString = "0" + byteString;
+    hashStr += byteString;
+  }
+  return hashStr;
+}
+
+// === คำนวณข้อมูลสถิติ/สารสนเทศสำหรับหน้าวิเคราะห์ข้อมูล (Analytics) ===
+function getAnalyticsData(ss, year, term) {
+  const records = getSheetData(ss, "supervision_records");
+  let filtered = records;
+  if(year && year !== "") {
+    filtered = filtered.filter(r => String(r.year) === String(year));
+  }
+  if(term && term !== "") {
+    filtered = filtered.filter(r => String(r.term) === String(term));
+  }
+  
+  const totalRecords = filtered.length;
+  
+  // นับจำนวนครูที่ได้รับการนิเทศ (ครูที่ไม่ซ้ำ)
+  const uniqueTeachers = {};
+  let totalPercentSum = 0;
+  let validPercentCount = 0;
+  
+  // นับระดับผลการประเมิน
+  const levelsCount = {
+    "ดีมาก": 0,
+    "ดี": 0,
+    "พอใช้": 0,
+    "ปรับปรุง": 0
+  };
+  
+  // สำหรับจับคู่กลุ่มสาระกับการคำนวณคะแนนเฉลี่ย
+  const deptStats = {};
+  
+  filtered.forEach(r => {
+    // ครู
+    if (r.teacher) {
+      uniqueTeachers[r.teacher] = true;
+    }
+    
+    // เปอร์เซ็นต์คะแนน
+    const pct = parseFloat(r.percent);
+    if (!isNaN(pct)) {
+      totalPercentSum += pct;
+      validPercentCount++;
+      
+      // กลุ่มสาระ
+      const dept = r.department || "ไม่ระบุ";
+      if (!deptStats[dept]) {
+        deptStats[dept] = { sum: 0, count: 0 };
+      }
+      deptStats[dept].sum += pct;
+      deptStats[dept].count += 1;
+    }
+    
+    // ระดับคุณภาพ
+    let lvl = String(r.level || "").trim();
+    // แมปปิ้งระดับคุณภาพเข้ากับ Chart (ดีมาก, ดี, พอใช้, ปรับปรุง)
+    if (lvl === "ยอดเยี่ยม" || lvl === "ดีเลิศ" || lvl === "ดีมาก") {
+      levelsCount["ดีมาก"]++;
+    } else if (lvl === "ดี") {
+      levelsCount["ดี"]++;
+    } else if (lvl === "ปานกลาง" || lvl === "พอใช้") {
+      levelsCount["พอใช้"]++;
+    } else if (lvl === "ควรพัฒนา" || lvl === "ปรับปรุง") {
+      levelsCount["ปรับปรุง"]++;
+    }
+  });
+  
+  const uniqueTeachersCount = Object.keys(uniqueTeachers).length;
+  const avgScore = validPercentCount > 0 ? (totalPercentSum / validPercentCount).toFixed(2) : "0.00";
+  
+  // แปลง levelsCount เป็น Array
+  const levelsArray = Object.entries(levelsCount).map(([level, count]) => ({
+    level: level,
+    count: count
+  }));
+  
+  // แปลง deptStats เป็น Array
+  const deptArray = Object.entries(deptStats).map(([dept, stat]) => ({
+    department: dept,
+    avg_score: (stat.sum / stat.count).toFixed(2)
+  }));
+  
+  const responseData = {
+    overview: {
+      total_records: totalRecords,
+      total_teachers: uniqueTeachersCount,
+      avg_score: avgScore
+    },
+    levels: levelsArray,
+    departments: deptArray
+  };
+  
+  return jsonResponse({ success: true, data: responseData });
+}
+

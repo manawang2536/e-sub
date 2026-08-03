@@ -60,10 +60,6 @@
             return html;
         }
 
-        // Clear previous cache once on page load to prevent old corrupted cache issues
-        Object.keys(sessionStorage).forEach(key => { if (key.startsWith('gas_cache_')) sessionStorage.removeItem(key); });
-        Object.keys(localStorage).forEach(key => { if (key.startsWith('gas_cache_')) localStorage.removeItem(key); });
-
         // Global Fetch Interceptor to Route local PHP API requests to Google Apps Script Web App
         const originalFetch = window.fetch;
         window.fetch = function() {
@@ -135,12 +131,6 @@
                 });
 
                 const gasConfig = config || {};
-                // ถ้าคำร้องขอส่งมาด้วย Form หรือ JSON Body
-                if (gasConfig.body && (gasConfig.body instanceof FormData || typeof gasConfig.body === 'string')) {
-                    // หากส่งมาด้วย JSON หรือ FormData
-                    // หมายเหตุ: สคริปต์ GAS doPost รับข้อมูลเป็น JSON text plain
-                    // หากส่งจากหน้าปกติเป็น Object JSON ให้คงไว้
-                }
                 
                 // เพื่อหลีกเลี่ยง preflight CORS สำหรับคำสั่ง POST บน GAS
                 if (!gasConfig.headers) gasConfig.headers = {};
@@ -154,27 +144,23 @@
 
                 if (isGetRequest) {
                     const cachedStr = storage.getItem(cacheKey);
-                    const cacheTime = storage.getItem(cacheKey + '_time');
-                    const TTL = 5 * 60 * 1000; // 5 นาทีสำหรับ API ทั่วไป
 
                     if (cachedStr) {
-                        if (isStats) {
-                            // Stale-While-Revalidate สำหรับ Stats (รีเทิร์นทันที แล้วโหลดใหม่เบื้องหลัง)
-                            originalFetch(gasUrl, gasConfig).then(res => {
-                                if (res.ok) {
-                                    res.clone().text().then(text => {
-                                        try {
-                                            JSON.parse(text); // ป้องกันการแคช Error HTML จาก GAS
+                        // Stale-While-Revalidate: รีเทิร์นแคชทันที แล้วอัปเดตข้อมูลเบื้องหลัง
+                        originalFetch(gasUrl, gasConfig).then(res => {
+                            if (res.ok) {
+                                res.clone().text().then(text => {
+                                    try {
+                                        const parsed = JSON.parse(text);
+                                        if (parsed && parsed.success) {
                                             storage.setItem(cacheKey, text);
-                                        } catch(e) {}
-                                    }).catch(()=>{});
-                                }
-                            }).catch(()=>{});
-                            return Promise.resolve(new Response(cachedStr, { status: 200, headers: { 'Content-Type': 'application/json' }}));
-                        } else if (cacheTime && (Date.now() - parseInt(cacheTime)) < TTL) {
-                            // แคชปกติสำหรับ API อื่นๆ
-                            return Promise.resolve(new Response(cachedStr, { status: 200, headers: { 'Content-Type': 'application/json' }}));
-                        }
+                                            storage.setItem(cacheKey + '_time', Date.now().toString());
+                                        }
+                                    } catch(e) {}
+                                }).catch(()=>{});
+                            }
+                        }).catch(()=>{});
+                        return Promise.resolve(new Response(cachedStr, { status: 200, headers: { 'Content-Type': 'application/json' }}));
                     }
                 } else {
                     // หากมีการเขียน/แก้ไขข้อมูล ให้ล้าง Cache ทั้งหมดเพื่อให้ข้อมูลอัปเดต
@@ -582,7 +568,25 @@
                 const viewsContainer = document.getElementById('views-container');
                 for (const file of viewsList) {
                     const html = await fetch(file).then(r => r.text());
-                    viewsContainer.insertAdjacentHTML('beforeend', html);
+                    const temp = document.createElement('div');
+                    temp.innerHTML = html;
+                    
+                    // เรียกรันแท็ก <script> ที่อยู่ภายใน Sub-view ที่ถูกโหลด
+                    const scripts = temp.querySelectorAll('script');
+                    scripts.forEach(s => {
+                        const newScript = document.createElement('script');
+                        if (s.src) {
+                            newScript.src = s.src;
+                        } else {
+                            newScript.textContent = s.textContent;
+                        }
+                        document.body.appendChild(newScript);
+                        s.remove();
+                    });
+                    
+                    while (temp.firstChild) {
+                        viewsContainer.appendChild(temp.firstChild);
+                    }
                 }
                 
                 // ตั้งค่ารายละเอียดทั่วไปบน Sidebar
@@ -3047,6 +3051,62 @@ function saveConfigOriginal() {
                 }
             });
         }
+
+        window.showContactModal = function() {
+            if (typeof Swal === 'undefined') return;
+            Swal.fire({
+                title: '<i class="fab fa-facebook-messenger text-blue-600 mr-2"></i> ติดต่อขอใช้ระบบ',
+                html: `
+                    <div class="text-center p-2">
+                        <p class="text-gray-600 mb-6 text-sm font-medium">หากท่านมีความสนใจติดตั้งระบบนิเทศการสอน หรือติดต่อสอบถามเพิ่มเติม<br>ท่านสามารถส่งข้อความทักแชทติดต่อได้โดยตรงทางแฟนเพจครับ</p>
+                        
+                        <div class="mb-4">
+                            <a href="https://m.me/Krunoiedu" target="_blank" class="inline-flex items-center gap-2 bg-[#1877F2] hover:bg-[#166FE5] text-white font-extrabold px-6 py-3.5 rounded-xl transition duration-200 shadow-md hover:scale-105 transform">
+                                <i class="fab fa-facebook-messenger text-xl"></i> ทักแชทข้อความเพจ
+                            </a>
+                        </div>
+                        
+                        <p class="text-xs text-gray-400 mt-6 font-semibold"><i class="fas fa-smile text-yellow-500 mr-1"></i> ยินดีให้คำแนะนำและบริการติดตั้งระบบผ่านทางเพจครับ</p>
+                    </div>
+                `,
+                showConfirmButton: true,
+                confirmButtonText: 'ปิดหน้าต่าง',
+                confirmButtonColor: '#9ca3af',
+                customClass: {
+                    popup: 'rounded-2xl shadow-2xl border border-gray-100'
+                }
+            });
+        };
+
+        window.showDonationModal = function() {
+            if (typeof Swal === 'undefined') return;
+            Swal.fire({
+                title: '<i class="fas fa-heart text-rose-500 mr-2"></i> สนับสนุนค่าพัฒนาระบบ',
+                html: `
+                    <div class="text-center p-2">
+                        <p class="text-gray-600 mb-4 text-sm font-medium">หากระบบนี้ช่วยให้งานของท่านสะดวกและรวดเร็วขึ้น<br>ท่านสามารถสนับสนุนค่าน้ำชา/กาแฟให้กับผู้พัฒนาได้ผ่านช่องทางนี้ครับ</p>
+                        
+                        <div class="mb-4 inline-block bg-white p-3 rounded-2xl shadow-sm border border-gray-100">
+                            <img src="https://promptpay.io/0821446629.png" alt="PromptPay QR Code" class="w-48 h-48 mx-auto object-contain">
+                        </div>
+                        
+                        <div class="mb-2">
+                            <a href="https://m.me/Krunoiedu" target="_blank" class="inline-flex items-center gap-2 bg-[#1877F2] hover:bg-[#166FE5] text-white font-extrabold px-5 py-2.5 rounded-xl transition duration-200 shadow-md hover:scale-105 transform">
+                                <i class="fab fa-facebook-messenger text-lg"></i> ส่งหลักฐานการโอนทางแชทเพจ
+                            </a>
+                        </div>
+                        
+                        <p class="text-xs text-gray-400 mt-6 font-semibold"><i class="fas fa-heart text-red-500 mr-1 animate-pulse"></i> ขอบคุณทุกการสนับสนุนและการใช้งานครับ</p>
+                    </div>
+                `,
+                showConfirmButton: true,
+                confirmButtonText: 'ปิดหน้าต่าง',
+                confirmButtonColor: '#3b82f6',
+                customClass: {
+                    popup: 'rounded-2xl shadow-2xl border border-gray-100'
+                }
+            });
+        };
 </script>
 </body>
 </html>

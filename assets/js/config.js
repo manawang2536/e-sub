@@ -128,9 +128,15 @@ if (typeof window !== 'undefined') {
             return originalFetch(resource, config).then(response => {
                 if (response.ok) {
                     return response.text().then(text => {
-                        // แปลงลิงก์ lh3.googleusercontent.com/d/ ให้เป็น drive.google.com/thumbnail เพื่อความยืดหยุ่นและการรองรับที่ดีกว่า
-                        const correctedText = text.replace(/https:\/\/lh3\.googleusercontent\.com\/d\/([a-zA-Z0-9_-]+)/g, 'https://drive.google.com/thumbnail?id=$1&sz=w1000');
-                        return new Response(correctedText, {
+                        if (text.includes('lh3.googleusercontent.com')) {
+                            const correctedText = text.replace(/https:\/\/lh3\.googleusercontent\.com\/d\/([a-zA-Z0-9_-]+)/g, 'https://drive.google.com/thumbnail?id=$1&sz=w1000');
+                            return new Response(correctedText, {
+                                status: response.status,
+                                statusText: response.statusText,
+                                headers: response.headers
+                            });
+                        }
+                        return new Response(text, {
                             status: response.status,
                             statusText: response.statusText,
                             headers: response.headers

@@ -140,6 +140,10 @@
             })
             .then(data => {
                 if (data.success) {
+                    // ล้างแคช API สถิติเดิมออกจาก Browser เมื่อเข้าสู่ระบบสำเร็จ
+                    Object.keys(sessionStorage).forEach(key => { if (key.startsWith('gas_cache_')) sessionStorage.removeItem(key); });
+                    Object.keys(localStorage).forEach(key => { if (key.startsWith('gas_cache_')) localStorage.removeItem(key); });
+
                     saveSession(data.user);
                     Swal.fire({
                         icon: 'success',

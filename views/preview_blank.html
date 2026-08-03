@@ -72,9 +72,11 @@
                 }
                 const authParams = `&session_token=${encodeURIComponent(sessionToken)}`;
 
-                // 1. โหลดข้อมูลแม่แบบประเมินและตั้งค่าทั่วไป
-                const templateRes = await fetch(`${GAS_API_URL}?action=getTemplate&id=${templateId}${authParams}`).then(r => r.json());
-                const settingsRes = await fetch(`${GAS_API_URL}?action=getSettings${authParams}`).then(r => r.json());
+                // 1. โหลดข้อมูลแม่แบบประเมินและตั้งค่าทั่วไปพร้อมกัน (Parallel Fetching)
+                const [templateRes, settingsRes] = await Promise.all([
+                    fetch(`${GAS_API_URL}?action=getTemplate&id=${templateId}${authParams}`).then(r => r.json()),
+                    fetch(`${GAS_API_URL}?action=getSettings${authParams}`).then(r => r.json())
+                ]);
 
                 if (!templateRes.success || !settingsRes.success) {
                     const errMsg = (!templateRes.success ? (templateRes.message || 'แม่แบบประเมินผิดพลาด') : '') + 

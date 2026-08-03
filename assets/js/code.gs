@@ -25,11 +25,14 @@ function checkUsersSessionColumns(sheet) {
 function validateSession(ss, sessionToken) {
   if (!sessionToken || sessionToken === "") return { success: false, message: "กรุณาส่งกุญแจยืนยันตนเซสชัน (session_token)" };
   
-  const sheet = ss.getSheetByName("users");
-  checkUsersSessionColumns(sheet);
+  let users = getSheetData(ss, "users", true);
+  let user = users.find(u => u.session_token && String(u.session_token).trim() === String(sessionToken).trim());
   
-  const users = getSheetData(ss, "users");
-  const user = users.find(u => String(u.session_token).trim() === String(sessionToken).trim());
+  // หากไม่พบใน Cache อาจเป็นเพราะเพิ่งล็อกอิน ให้ลองดึงแบบไม่ใช้ Cache จาก Sheet อีกครั้งเพื่อความแม่นยำ
+  if (!user) {
+    users = getSheetData(ss, "users", false);
+    user = users.find(u => u.session_token && String(u.session_token).trim() === String(sessionToken).trim());
+  }
   
   if (!user) {
     return { success: false, message: "เซสชันไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่" };
@@ -41,13 +44,19 @@ function validateSession(ss, sessionToken) {
     return { success: false, message: "เซสชันหมดอายุแล้ว กรุณาเข้าสู่ระบบใหม่" };
   }
   
-  // ยืดอายุของเซสชันชั่วคราวออกไปอีก 2 ชั่วโมงเมื่อมีการใช้งานจริง
-  const newExpiry = now + (2 * 60 * 60 * 1000);
-  const vals = sheet.getDataRange().getValues();
-  for (let i = 1; i < vals.length; i++) {
-    if (String(vals[i][0]) === String(user.id)) {
-      sheet.getRange(i + 1, 13).setValue(String(newExpiry));
-      break;
+  // ยืดอายุของเซสชันชั่วคราวออกไปอีก 2 ชั่วโมง เฉพาะเมื่อเวลาเหลือน้อยกว่า 30 นาที เพื่อประหยัดเวลาการเขียน Sheet
+  const remaining = expiry - now;
+  if (remaining < 30 * 60 * 1000) {
+    const sheet = ss.getSheetByName("users");
+    checkUsersSessionColumns(sheet);
+    const newExpiry = now + (2 * 60 * 60 * 1000);
+    const vals = sheet.getDataRange().getValues();
+    for (let i = 1; i < vals.length; i++) {
+      if (String(vals[i][0]) === String(user.id)) {
+        sheet.getRange(i + 1, 13).setValue(String(newExpiry));
+        clearSheetCache("users");
+        break;
+      }
     }
   }
   
@@ -70,7 +79,7 @@ function doGet(e) {
   }
 
   // 2. ตรวจสอบความปลอดภัยของเซสชันเมื่อเข้าถึง API ภายใน (ยกเว้น API สาธารณะหน้าแรก)
-  const publicActions = ["getSettings", "getDashboardStats", "getStats"];
+  const publicActions = ["getSettings", "getDashboardStats", "getStats", "getDashboardAllData"];
   if (publicActions.indexOf(action) === -1) {
     const authResult = validateSession(ss, e.parameter.session_token);
     if (!authResult.success) {
@@ -85,6 +94,8 @@ function doGet(e) {
       case "getStats":
       case "getDashboardStats":
         return getDashboardStats(ss);
+      case "getDashboardAllData":
+        return getDashboardAllData(ss);
       case "listUsers":
         return listUsers(ss);
       case "getReportData":
@@ -145,40 +156,72 @@ function doPost(e) {
   }
   
   try {
+    let result;
     switch(action) {
       case "login":
-        return login(ss, input.username, input.password);
+        result = login(ss, input.username, input.password);
+        clearSheetCache("users");
+        break;
       case "saveData":
-        return saveData(ss, input);
+        result = saveData(ss, input);
+        clearSheetCache("supervision_records");
+        break;
       case "saveConfig":
-        return saveConfig(ss, input);
+        result = saveConfig(ss, input);
+        clearSheetCache("templates");
+        break;
       case "saveSettings":
-        return saveSettings(ss, input);
+        result = saveSettings(ss, input);
+        clearSheetCache("settings");
+        break;
       case "createUser":
-        return createUser(ss, input);
+        result = createUser(ss, input);
+        clearSheetCache("users");
+        break;
       case "updateUser":
-        return updateUser(ss, input);
+        result = updateUser(ss, input);
+        clearSheetCache("users");
+        break;
       case "deleteUser":
-        return deleteUser(ss, input.id);
+        result = deleteUser(ss, input.id);
+        clearSheetCache("users");
+        break;
       case "bulkAssignTemplates":
-        return bulkAssignTemplates(ss, input);
+        result = bulkAssignTemplates(ss, input);
+        clearSheetCache("users");
+        break;
       case "changePassword":
-        return changePassword(ss, input);
+        result = changePassword(ss, input);
+        clearSheetCache("users");
+        break;
       case "createAssignments":
-        return createAssignments(ss, input);
+        result = createAssignments(ss, input);
+        clearSheetCache("assignments");
+        break;
       case "deleteReport":
-        return deleteReport(ss, input.id);
+        result = deleteReport(ss, input.id);
+        clearSheetCache("supervision_records");
+        break;
       case "createTerm":
-        return createTerm(ss, input);
+        result = createTerm(ss, input);
+        clearSheetCache("terms");
+        break;
       case "setTermActive":
-        return setTermActive(ss, input.id);
+        result = setTermActive(ss, input.id);
+        clearSheetCache("terms");
+        break;
       case "deleteTerm":
-        return deleteTerm(ss, input.id);
+        result = deleteTerm(ss, input.id);
+        clearSheetCache("terms");
+        break;
       case "importUsers":
-        return importUsers(ss, input);
+        result = importUsers(ss, input);
+        clearSheetCache("users");
+        break;
       default:
         return jsonResponse({ success: false, message: "ไม่พบ Action POST: " + action });
     }
+    return result;
   } catch(err) {
     return jsonResponse({ success: false, message: "เกิดข้อผิดพลาด: " + err.toString() });
   }
@@ -190,8 +233,32 @@ function jsonResponse(data) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-// === ฟังก์ชันช่วยเหลือ: แปลงแผ่นงานเป็น Array ของ Object ===
-function getSheetData(ss, sheetName) {
+// === ฟังก์ชันช่วยเหลือสำหรับการล้าง Cache ===
+function clearSheetCache(sheetName) {
+  try {
+    const cache = CacheService.getScriptCache();
+    if (sheetName) {
+      cache.remove("sheet_cache_" + sheetName);
+    } else {
+      ["settings", "users", "terms", "templates", "supervision_records", "assignments"].forEach(s => {
+        cache.remove("sheet_cache_" + s);
+      });
+    }
+  } catch(e) {}
+}
+
+// === ฟังก์ชันช่วยเหลือ: แปลงแผ่นงานเป็น Array ของ Object พร้อมระบบ Caching ===
+function getSheetData(ss, sheetName, useCache = true) {
+  if (useCache) {
+    try {
+      const cache = CacheService.getScriptCache();
+      const cached = cache.get("sheet_cache_" + sheetName);
+      if (cached) {
+        return JSON.parse(cached);
+      }
+    } catch(e) {}
+  }
+
   const sheet = ss.getSheetByName(sheetName);
   if (!sheet) return [];
   const range = sheet.getDataRange();
@@ -208,6 +275,17 @@ function getSheetData(ss, sheetName) {
     });
     data.push(obj);
   }
+
+  if (useCache) {
+    try {
+      const cache = CacheService.getScriptCache();
+      const str = JSON.stringify(data);
+      if (str.length < 90000) { // Limit for CacheService 100KB per item
+        cache.put("sheet_cache_" + sheetName, str, 600); // 10 minutes cache
+      }
+    } catch(e) {}
+  }
+
   return data;
 }
 
@@ -237,6 +315,7 @@ function login(ss, username, password) {
       if (String(vals[i][0]) === String(user.id)) {
         sheet.getRange(i + 1, 12).setValue(token);
         sheet.getRange(i + 1, 13).setValue(String(expiryTime));
+        clearSheetCache("users");
         break;
       }
     }
@@ -358,6 +437,32 @@ function getDashboardStats(ss) {
       total_teachers: totalTeachers,
       avg_score: avgScore,
       levels: levelStats
+    }
+  });
+}
+
+function getDashboardAllData(ss) {
+  const statsRes = getDashboardStats(ss);
+  const settingsRes = getSettings(ss);
+  const terms = getSheetData(ss, "terms");
+  const assignments = getSheetData(ss, "assignments");
+
+  let statsData = null;
+  let settingsData = null;
+  try {
+    statsData = JSON.parse(statsRes.getContent()).data;
+  } catch(e) {}
+  try {
+    settingsData = JSON.parse(settingsRes.getContent()).data;
+  } catch(e) {}
+
+  return jsonResponse({
+    success: true,
+    data: {
+      stats: statsData,
+      settings: settingsData,
+      terms: terms,
+      assignments: assignments
     }
   });
 }

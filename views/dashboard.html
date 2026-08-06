@@ -41,6 +41,31 @@
             );
         }
 
+        // Thai Date Formatter Helper
+        function formatDateThai(dateStr) {
+            if (!dateStr || dateStr === '-') return '-';
+            if (typeof dateStr === 'string' && (dateStr.includes('ม.ค.') || dateStr.includes('มกราคม') || dateStr.includes('พ.ศ.'))) {
+                return dateStr;
+            }
+            
+            let date;
+            if (typeof dateStr === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateStr.trim())) {
+                const [y, m, d] = dateStr.trim().split('-').map(Number);
+                date = new Date(y, m - 1, d);
+            } else {
+                date = new Date(dateStr);
+            }
+            
+            if (isNaN(date.getTime())) return dateStr;
+
+            const thaiMonthsFull = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
+            const day = date.getDate();
+            const month = thaiMonthsFull[date.getMonth()];
+            const year = date.getFullYear() + 543;
+            
+            return `${day} ${month} ${year}`;
+        }
+
         // Skeleton Loader Helper for Tables
         function getSkeletonRows(cols, rows = 5) {
             let html = '';
@@ -1223,7 +1248,7 @@ function saveConfigOriginal() {
                                 
                                 return `
                                 <tr class="hover:bg-blue-50 transition search-row">
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">${row.date || '-'}</td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">${formatDateThai(row.date)}</td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-800 search-target">${row.teacher || '-'}</td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 search-target">${row.subject || '-'}</td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-center font-bold text-school">${row.percent || '0'}%</td>

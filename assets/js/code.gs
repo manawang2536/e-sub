@@ -196,7 +196,15 @@ function doPost(e) {
         break;
       case "createAssignments":
         result = createAssignments(ss, input);
-        clearSheetCache("assignments");
+        clearSheetCache("supervision_assignments");
+        break;
+      case "updateAssignment":
+        result = updateAssignment(ss, input);
+        clearSheetCache("supervision_assignments");
+        break;
+      case "deleteAssignment":
+        result = deleteAssignment(ss, input.id || input);
+        clearSheetCache("supervision_assignments");
         break;
       case "deleteReport":
         result = deleteReport(ss, input.id);
@@ -817,34 +825,72 @@ function deleteTerm(ss, id) {
 function listAssignments(ss) {
   const assignments = getSheetData(ss, "supervision_assignments");
   const users = getSheetData(ss, "users");
+  const terms = getSheetData(ss, "academic_terms");
   
   const mapped = assignments.map(a => {
     const teacher = users.find(u => String(u.id) === String(a.teacher_id));
+    const observer = users.find(u => String(u.id) === String(a.observer_id));
+
+    const termObj = terms ? terms.find(t => 
+      String(t.id) === String(a.term_id) || 
+      String(t.id) === String(a.term) || 
+      (String(t.term) === String(a.term) && String(t.year) === String(a.year))
+    ) : null;
+
+    const yearVal = String(a.year || a.term_year || (termObj ? termObj.year : "") || "");
+    const termVal = String(a.term || (termObj ? termObj.term : "") || "");
+    const termName = String(a.term_name || (termObj ? ("ภาคเรียนที่ " + termObj.term) : (termVal ? "ภาคเรียนที่ " + termVal : "")) || "");
+
     return {
       id: a.id,
       observer_id: a.observer_id,
+      observer_name: observer ? (observer.display_name || observer.username) : (a.observer_name || ("ผู้นิเทศ ID: " + a.observer_id)),
       teacher_id: a.teacher_id,
-      teacher_name: teacher ? teacher.display_name : ("ครู ID: " + a.teacher_id),
-      term: a.term,
-      term_id: a.term,
-      term_name: "ภาคเรียนที่ " + a.term,
-      year: a.year,
-      status: a.status,
+      teacher_name: teacher ? (teacher.display_name || teacher.username) : (a.teacher_name || ("ครู ID: " + a.teacher_id)),
+      term: termVal,
+      term_id: a.term_id || a.term || (termObj ? termObj.id : ""),
+      term_name: termName,
+      year: yearVal,
+      term_year: yearVal,
+      status: a.status || "pending",
       created_at: a.created_at
     };
   });
   
   return jsonResponse({ success: true, data: mapped });
 }
+
 function createAssignments(ss, input) {
   const sheet = ss.getSheetByName("supervision_assignments");
   const currentAss = getSheetData(ss, "supervision_assignments");
+  const terms = getSheetData(ss, "academic_terms");
   
-  const assignments = input.assignments || []; // Array: { observer_id, teacher_id, term, year }
+  let itemsToCreate = [];
+  if (input.assignments && Array.isArray(input.assignments)) {
+    itemsToCreate = input.assignments;
+  } else if (input.term_id && input.observer_ids && input.teacher_ids) {
+    const termObj = terms.find(t => String(t.id) === String(input.term_id));
+    const termVal = termObj ? termObj.term : input.term_id;
+    const yearVal = termObj ? termObj.year : "";
+    
+    const obsArr = Array.isArray(input.observer_ids) ? input.observer_ids : [input.observer_ids];
+    const teachArr = Array.isArray(input.teacher_ids) ? input.teacher_ids : [input.teacher_ids];
+    
+    obsArr.forEach(obsId => {
+      teachArr.forEach(teachId => {
+        itemsToCreate.push({
+          observer_id: obsId,
+          teacher_id: teachId,
+          term: termVal,
+          year: yearVal
+        });
+      });
+    });
+  }
+  
   let createdCount = 0;
   
-  assignments.forEach(item => {
-    // เช็คกรณีมีการมอบหมายงานซ้ำอยู่แล้ว
+  itemsToCreate.forEach(item => {
     const isDup = currentAss.some(a => 
       String(a.observer_id) === String(item.observer_id) &&
       String(a.teacher_id) === String(item.teacher_id) &&
@@ -866,7 +912,69 @@ function createAssignments(ss, input) {
     }
   });
   
+  clearSheetCache("supervision_assignments");
   return jsonResponse({ success: true, message: `บันทึกการมอบหมายงานนิเทศเรียบร้อยแล้ว จำนวน ${createdCount} งาน` });
+}
+
+function updateAssignment(ss, input) {
+  const sheet = ss.getSheetByName("supervision_assignments");
+  if (!sheet) return jsonResponse({ success: false, message: "ไม่พบตารางการมอบหมายงาน" });
+  
+  const data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return jsonResponse({ success: false, message: "ไม่พบข้อมูลการมอบหมายงาน" });
+  
+  const headers = data[0];
+  const idCol = headers.indexOf("id");
+  const obsCol = headers.indexOf("observer_id");
+  const teachCol = headers.indexOf("teacher_id");
+  const termCol = headers.indexOf("term");
+  const yearCol = headers.indexOf("year");
+
+  let termVal = "";
+  let yearVal = "";
+  if (input.term_id) {
+    const terms = getSheetData(ss, "academic_terms");
+    const termObj = terms.find(t => String(t.id) === String(input.term_id));
+    if (termObj) {
+      termVal = termObj.term;
+      yearVal = termObj.year;
+    }
+  }
+  
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][idCol]) === String(input.id)) {
+      if (obsCol !== -1 && input.observer_id) sheet.getRange(i + 1, obsCol + 1).setValue(input.observer_id);
+      if (teachCol !== -1 && input.teacher_id) sheet.getRange(i + 1, teachCol + 1).setValue(input.teacher_id);
+      if (termCol !== -1 && (termVal || input.term)) sheet.getRange(i + 1, termCol + 1).setValue(termVal || input.term);
+      if (yearCol !== -1 && (yearVal || input.year)) sheet.getRange(i + 1, yearCol + 1).setValue(yearVal || input.year);
+      
+      clearSheetCache("supervision_assignments");
+      return jsonResponse({ success: true, message: "แก้ไขข้อมูลการมอบหมายงานเรียบร้อยแล้ว" });
+    }
+  }
+  
+  return jsonResponse({ success: false, message: "ไม่พบรายการมอบหมายงานที่ต้องการแก้ไข" });
+}
+
+function deleteAssignment(ss, id) {
+  const sheet = ss.getSheetByName("supervision_assignments");
+  if (!sheet) return jsonResponse({ success: false, message: "ไม่พบตารางการมอบหมายงาน" });
+  
+  const data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return jsonResponse({ success: false, message: "ไม่พบข้อมูลการมอบหมายงาน" });
+  
+  const headers = data[0];
+  const idCol = headers.indexOf("id");
+  
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][idCol]) === String(id)) {
+      sheet.deleteRow(i + 1);
+      clearSheetCache("supervision_assignments");
+      return jsonResponse({ success: true, message: "ลบการมอบหมายงานเรียบร้อยแล้ว" });
+    }
+  }
+  
+  return jsonResponse({ success: false, message: "ไม่พบรายการมอบหมายงานที่ต้องการลบ" });
 }
 // === บันทึกประวัติ (Write Log helper) ===
 function writeLog(ss, userId, action, tableName, rowId, details) {

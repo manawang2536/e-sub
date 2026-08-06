@@ -102,6 +102,8 @@
                 } else if (resource.includes('assignments.php')) {
                     if (action === 'list') gasAction = 'listAssignments';
                     else if (action === 'create_multiple') gasAction = 'createAssignments';
+                    else if (action === 'update') gasAction = 'updateAssignment';
+                    else if (action === 'delete') gasAction = 'deleteAssignment';
                 } else if (resource.includes('import_users.php')) {
                     gasAction = 'importUsers';
                 } else if (resource.includes('dashboard_stats.php')) {
@@ -2286,15 +2288,18 @@ function saveConfigOriginal() {
                                     const statusBadge = a.status === 'pending'
                                         ? '<span class="bg-yellow-100 text-yellow-800 text-xs px-2 py-1 rounded-full">รอดำเนินการ</span>'
                                         : '<span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full">เสร็จสิ้น</span>';
+                                    const displayYear = a.term_year || a.year || '';
+                                    const displayTerm = a.term_name || (a.term ? 'ภาคเรียนที่ ' + a.term : '');
+                                    const termYearText = displayYear ? `${displayYear}/${displayTerm}` : displayTerm;
                                     return `
                                         <tr class="hover:bg-blue-50 transition search-row">
-                                            <td class="px-6 py-4 text-center">${a.term_year}/${a.term_name}</td>
-                                            <td class="px-6 py-4">${escapeHTML(a.observer_name)}</td>
-                                            <td class="px-6 py-4">${escapeHTML(a.teacher_name)}</td>
+                                            <td class="px-6 py-4 text-center">${escapeHTML(termYearText)}</td>
+                                            <td class="px-6 py-4">${escapeHTML(a.observer_name || '')}</td>
+                                            <td class="px-6 py-4">${escapeHTML(a.teacher_name || '')}</td>
                                             <td class="px-6 py-4 text-center">${statusBadge}</td>
                                             <td class="px-6 py-4 text-center">
-                                                <button onclick="editAssignment(${a.id}, ${a.term_id}, ${a.observer_id}, ${a.teacher_id})" class="text-blue-500 hover:text-blue-700 mr-3"><i class="fas fa-edit"></i></button>
-                                                <button onclick="deleteAssignment(${a.id})" class="text-red-500 hover:text-red-700"><i class="fas fa-trash"></i></button>
+                                                <button onclick="editAssignment('${a.id}', '${a.term_id}', '${a.observer_id}', '${a.teacher_id}')" class="text-blue-500 hover:text-blue-700 mr-3"><i class="fas fa-edit"></i></button>
+                                                <button onclick="deleteAssignment('${a.id}')" class="text-red-500 hover:text-red-700"><i class="fas fa-trash"></i></button>
                                             </td>
                                         </tr>
                                     `;
@@ -2302,10 +2307,11 @@ function saveConfigOriginal() {
                                 filter: (items) => {
                                     const input = document.getElementById('searchAssignments') ? document.getElementById('searchAssignments').value.toLowerCase() : '';
                                     return items.filter(a => 
-                                        (a.term_year && a.term_year.toLowerCase().includes(input)) ||
-                                        (a.term_name && a.term_name.toLowerCase().includes(input)) ||
-                                        (a.observer_name && a.observer_name.toLowerCase().includes(input)) ||
-                                        (a.teacher_name && a.teacher_name.toLowerCase().includes(input)) ||
+                                        (a.term_year && String(a.term_year).toLowerCase().includes(input)) ||
+                                        (a.year && String(a.year).toLowerCase().includes(input)) ||
+                                        (a.term_name && String(a.term_name).toLowerCase().includes(input)) ||
+                                        (a.observer_name && String(a.observer_name).toLowerCase().includes(input)) ||
+                                        (a.teacher_name && String(a.teacher_name).toLowerCase().includes(input)) ||
                                         (a.status && (a.status === 'pending' ? 'รอดำเนินการ' : 'เสร็จสิ้น').includes(input))
                                     );
                                 }

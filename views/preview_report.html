@@ -378,12 +378,22 @@
                     <div style="font-size: 11pt; margin-top: 30px; margin-left: 20px;">
                         <p class="font-bold mb-4">สรุปผลการนิเทศ ตามเกณฑ์</p>
                         <div style="margin-left: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 20px;">
-                            ${evaluationCriteria.map(c => `
-                                <div class="mb-2">
-                                    <span class="checkbox font-bold text-blue-600">${record.level === c.name ? '✓' : ''}</span> 
-                                    ร้อยละ ${c.min} - ${c.max} &nbsp;&nbsp; หมายถึง &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ${c.name}
-                                </div>
-                            `).join('')}
+                            ${evaluationCriteria.map(c => {
+                                const percentVal = parseFloat(record.percent) || 0;
+                                const isChecked = (String(record.level || '').trim() === String(c.name || '').trim()) ||
+                                                  (percentVal >= Number(c.min) && percentVal <= Number(c.max)) ||
+                                                  (Number(c.min) >= 90 && (record.level === 'ดีมาก' || record.level === 'ยอดเยี่ยม')) ||
+                                                  (Number(c.min) >= 80 && Number(c.max) <= 90 && (record.level === 'ดีเลิศ' || record.level === 'ดีมาก')) ||
+                                                  (Number(c.min) >= 70 && Number(c.max) <= 80 && (record.level === 'ดี')) ||
+                                                  (Number(c.min) >= 60 && Number(c.max) <= 70 && (record.level === 'พอใช้' || record.level === 'ปานกลาง')) ||
+                                                  (Number(c.max) <= 60 && (record.level === 'ควรปรับปรุง' || record.level === 'ไม่ผ่าน' || record.level === 'ควรพัฒนา'));
+                                return `
+                                    <div class="mb-2">
+                                        <span class="checkbox font-bold text-blue-600">${isChecked ? '✓' : ''}</span> 
+                                        ร้อยละ ${c.min} - ${c.max} &nbsp;&nbsp; หมายถึง &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ${c.name}
+                                    </div>
+                                `;
+                            }).join('')}
                         </div>
                     </div>
                     ` : ''}
@@ -431,12 +441,22 @@
                         <div style="font-size: 11pt; margin-top: 30px; margin-left: 20px;">
                             <p class="font-bold mb-4">สรุปผลการนิเทศ ตามเกณฑ์</p>
                             <div style="margin-left: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 20px;">
-                                ${evaluationCriteria.map(c => `
-                                    <div class="mb-2">
-                                        <span class="checkbox font-bold text-blue-600">${record.level === c.name ? '✓' : ''}</span> 
-                                        ร้อยละ ${c.min} - ${c.max} &nbsp;&nbsp; หมายถึง &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ${c.name}
-                                    </div>
-                                `).join('')}
+                                ${evaluationCriteria.map(c => {
+                                    const percentVal = parseFloat(record.percent) || 0;
+                                    const isChecked = (String(record.level || '').trim() === String(c.name || '').trim()) ||
+                                                      (percentVal >= Number(c.min) && percentVal <= Number(c.max)) ||
+                                                      (Number(c.min) >= 90 && (record.level === 'ดีมาก' || record.level === 'ยอดเยี่ยม')) ||
+                                                      (Number(c.min) >= 80 && Number(c.max) <= 90 && (record.level === 'ดีเลิศ' || record.level === 'ดีมาก')) ||
+                                                      (Number(c.min) >= 70 && Number(c.max) <= 80 && (record.level === 'ดี')) ||
+                                                      (Number(c.min) >= 60 && Number(c.max) <= 70 && (record.level === 'พอใช้' || record.level === 'ปานกลาง')) ||
+                                                      (Number(c.max) <= 60 && (record.level === 'ควรปรับปรุง' || record.level === 'ไม่ผ่าน' || record.level === 'ควรพัฒนา'));
+                                    return `
+                                        <div class="mb-2">
+                                            <span class="checkbox font-bold text-blue-600">${isChecked ? '✓' : ''}</span> 
+                                            ร้อยละ ${c.min} - ${c.max} &nbsp;&nbsp; หมายถึง &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ${c.name}
+                                        </div>
+                                    `;
+                                }).join('')}
                             </div>
                         </div>
                     </div>

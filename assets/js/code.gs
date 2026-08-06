@@ -1080,7 +1080,11 @@ function listLogs(ss) {
     };
   });
   
-  mappedLogs.reverse();
+  mappedLogs.sort((a, b) => {
+    const timeA = new Date(a.created_at || a.id || 0).getTime();
+    const timeB = new Date(b.created_at || b.id || 0).getTime();
+    return timeB - timeA;
+  });
   return jsonResponse({ success: true, data: mappedLogs });
 }
 // SHA-256 function สำหรับสร้าง Hash ของรหัสผ่าน

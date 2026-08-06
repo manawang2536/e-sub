@@ -66,6 +66,34 @@
             return `${day} ${month} ${year}`;
         }
 
+        // Thai Date Time Formatter Helper (สำหรับ Logs และข้อมูลที่มีเวลา)
+        function formatDateTimeThai(dateStr) {
+            if (!dateStr || dateStr === '-') return '-';
+            if (typeof dateStr === 'string' && dateStr.includes('พ.ศ.')) {
+                return dateStr;
+            }
+            
+            let date;
+            if (typeof dateStr === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateStr.trim())) {
+                const [y, m, d] = dateStr.trim().split('-').map(Number);
+                date = new Date(y, m - 1, d);
+            } else {
+                date = new Date(dateStr);
+            }
+            
+            if (isNaN(date.getTime())) return dateStr;
+
+            const thaiMonthsFull = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
+            const day = date.getDate();
+            const month = thaiMonthsFull[date.getMonth()];
+            const year = date.getFullYear() + 543;
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            const seconds = String(date.getSeconds()).padStart(2, '0');
+            
+            return `${day} ${month} ${year} ${hours}:${minutes}:${seconds} น.`;
+        }
+
         // Skeleton Loader Helper for Tables
         function getSkeletonRows(cols, rows = 5) {
             let html = '';
@@ -2912,7 +2940,7 @@ function saveConfigOriginal() {
 
                                     return `
                                         <tr class="hover:bg-blue-50 transition search-row">
-                                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">${escapeHTML(log.date_formatted)}</td>
+                                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">${escapeHTML(formatDateTimeThai(log.date_formatted || log.created_at))}</td>
                                             <td class="px-6 py-4 whitespace-nowrap text-sm">
                                                 <div class="font-bold text-gray-800">${escapeHTML(log.username)}</div>
                                                 <div class="text-xs text-gray-400">ID: ${escapeHTML(log.user_id || 'Guest')}</div>
@@ -2949,7 +2977,12 @@ function saveConfigOriginal() {
                                 }
                             });
                         }
-                        logsPaginator.setData(res.data);
+                        const sortedLogs = (res.data || []).sort((a, b) => {
+                            const timeA = new Date(a.created_at || a.date_formatted || a.id || 0).getTime();
+                            const timeB = new Date(b.created_at || b.date_formatted || b.id || 0).getTime();
+                            return timeB - timeA;
+                        });
+                        logsPaginator.setData(sortedLogs);
                     } else {
                         Swal.fire('ข้อผิดพลาด', res.message, 'error');
                     }

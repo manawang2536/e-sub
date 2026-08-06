@@ -84,10 +84,19 @@
                     <p class="text-gray-500 text-sm">ดูผลและพิมพ์ PDF</p>
                 </div>
             </div>
-            <?php if ($userRole === 'admin'): ?>
-            <div onclick="switchView('users')"
+            <div onclick="switchView('analytics')"
                 class="bg-white p-6 rounded-xl shadow-md hover:shadow-lg transition cursor-pointer flex items-center space-x-4 border border-gray-100">
-                <div class="w-14 h-14 bg-blue-50 text-green-600 rounded-full flex items-center justify-center text-2xl">
+                <div class="w-14 h-14 bg-purple-50 text-purple-600 rounded-full flex items-center justify-center text-2xl">
+                    <i class="fas fa-chart-pie"></i>
+                </div>
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-800">สรุปสารสนเทศ</h3>
+                    <p class="text-gray-500 text-sm">วิเคราะห์ข้อมูล/ส่งออกผู้บริหาร</p>
+                </div>
+            </div>
+            <div onclick="switchView('users')" id="quick-link-users"
+                class="bg-white p-6 rounded-xl shadow-md hover:shadow-lg transition cursor-pointer flex items-center space-x-4 border border-gray-100">
+                <div class="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center text-2xl">
                     <i class="fas fa-users"></i>
                 </div>
                 <div>
@@ -95,7 +104,6 @@
                     <p class="text-gray-500 text-sm">เพิ่ม/นำเข้ารายชื่อครู</p>
                 </div>
             </div>
-            <?php endif; ?>
         </div>
 
         <!-- Assigned Tasks -->

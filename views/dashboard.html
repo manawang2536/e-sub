@@ -1944,12 +1944,20 @@ function saveConfigOriginal() {
 
             Swal.fire({ title: 'กำลังบันทึก...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
             
+            let itemsArr = [];
+            if (configData && Array.isArray(configData.items)) {
+                itemsArr = configData.items;
+            } else if (Array.isArray(configData)) {
+                itemsArr = configData;
+            }
+
             fetch('../api/templates.php?action=save', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     id: id,
                     name: name,
+                    items: itemsArr,
                     items_json: JSON.stringify(configData)
                 })
             })
@@ -1958,6 +1966,7 @@ function saveConfigOriginal() {
                 if (res.success) {
                     Swal.fire('สำเร็จ', res.message, 'success').then(() => {
                         closeTemplateEditor();
+                        loadSettingsTemplatesList();
                     });
                 } else {
                     Swal.fire('ข้อผิดพลาด', res.message, 'error');
@@ -3009,30 +3018,78 @@ function saveConfigOriginal() {
         let analyticsDeptChartInstance = null;
 
         function loadAnalyticsData() {
-            const year = document.getElementById('analyticsYear').value;
-            const term = document.getElementById('analyticsTerm').value;
+            const yearEl = document.getElementById('analyticsYear');
+            const termEl = document.getElementById('analyticsTerm');
+            const year = yearEl ? yearEl.value : 'all';
+            const term = termEl ? termEl.value : 'all';
             
-            fetch(`../api/api.php?action=getAnalyticsData&year=${year}&term=${term}`)
+            showAnalyticsSkeleton();
+            
+            const fetchYear = (year === 'all') ? '' : year;
+            const fetchTerm = (term === 'all') ? '' : term;
+            
+            fetch(`../api/api.php?action=getAnalyticsData&year=${fetchYear}&term=${fetchTerm}`)
                 .then(res => res.json())
                 .then(res => {
                     if (res.success) {
                         const data = res.data;
                         
-                        // Update Stat Cards
-                        document.getElementById('stat-total-records').innerText = data.overview.total_records;
-                        document.getElementById('stat-total-teachers').innerText = data.overview.total_teachers;
-                        document.getElementById('stat-avg-score').innerText = data.overview.avg_score;
+                        // Update Stat Cards (4 Cards)
+                        const recEl = document.getElementById('stat-total-records');
+                        const allTeachEl = document.getElementById('stat-total-all-teachers');
+                        const rateEl = document.getElementById('stat-supervised-rate');
+                        const supCountEl = document.getElementById('stat-supervised-count');
+                        const allTeachSubEl = document.getElementById('stat-all-teachers-sub');
+                        const avgEl = document.getElementById('stat-avg-score');
+                        
+                        const overview = data.overview || {};
+                        const totalRecords = overview.total_records !== undefined ? overview.total_records : 0;
+                        const totalAllTeachers = overview.total_all_teachers !== undefined ? overview.total_all_teachers : (overview.total_teachers || 0);
+                        const supervisedTeachers = overview.supervised_teachers !== undefined ? overview.supervised_teachers : (overview.total_teachers || 0);
+                        const supervisedRate = overview.supervised_rate !== undefined ? overview.supervised_rate : (totalAllTeachers > 0 ? ((supervisedTeachers / totalAllTeachers) * 100).toFixed(1) : '0.0');
+                        const avgScore = overview.avg_score !== undefined ? overview.avg_score : '0.00';
+
+                        if (recEl) recEl.innerText = totalRecords;
+                        if (allTeachEl) allTeachEl.innerText = totalAllTeachers;
+                        if (rateEl) rateEl.innerText = supervisedRate + '%';
+                        if (supCountEl) supCountEl.innerText = supervisedTeachers;
+                        if (allTeachSubEl) allTeachSubEl.innerText = totalAllTeachers;
+                        if (avgEl) avgEl.innerText = avgScore;
                         
                         // Render Level Pie Chart
-                        renderAnalyticsLevelChart(data.levels);
+                        renderAnalyticsLevelChart(data.levels || []);
                         
                         // Render Dept Bar Chart
-                        renderAnalyticsDeptChart(data.departments);
+                        renderAnalyticsDeptChart(data.departments || []);
                     } else {
                         Swal.fire('ข้อผิดพลาด', res.message, 'error');
                     }
                 })
-                .catch(err => console.error('Error fetching analytics:', err));
+                .catch(err => console.error('Error fetching analytics:', err))
+                .finally(() => {
+                    hideAnalyticsSkeleton();
+                });
+        }
+
+        function showAnalyticsSkeleton() {
+            ['stat-total-records', 'stat-total-all-teachers', 'stat-supervised-rate', 'stat-avg-score'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.innerHTML = `<span class="inline-block animate-pulse bg-white/40 h-8 w-16 rounded-md"></span>`;
+                }
+            });
+
+            ['analytics-skeleton-pie', 'analytics-skeleton-bar'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.classList.remove('hidden');
+            });
+        }
+
+        function hideAnalyticsSkeleton() {
+            ['analytics-skeleton-pie', 'analytics-skeleton-bar'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.classList.add('hidden');
+            });
         }
         
         function renderAnalyticsLevelChart(levelsData) {
@@ -3114,6 +3171,70 @@ function saveConfigOriginal() {
                     }
                 }
             });
+        }
+
+        function exportExecutiveExcel() {
+            const year = document.getElementById('analyticsYear') ? document.getElementById('analyticsYear').value : 'all';
+            const term = document.getElementById('analyticsTerm') ? document.getElementById('analyticsTerm').value : 'all';
+
+            Swal.fire({ title: 'กำลังเตรียมข้อมูลไฟล์ Excel...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+
+            const fetchYear = year === 'all' ? '' : year;
+            const fetchTerm = term === 'all' ? '' : term;
+
+            fetch(`../api/api.php?action=getReportData&year=${fetchYear}&term=${fetchTerm}`)
+                .then(res => res.json())
+                .then(res => {
+                    Swal.close();
+                    if (!res.success || !res.data || res.data.length === 0) {
+                        Swal.fire('แจ้งเตือน', 'ไม่พบข้อมูลการนิเทศสำหรับปีการศึกษา/ภาคเรียนที่เลือก', 'info');
+                        return;
+                    }
+
+                    const headers = ['ลำดับ', 'วันที่นิเทศ', 'ปีการศึกษา', 'ภาคเรียน', 'ครูผู้รับการนิเทศ', 'กลุ่มสาระการเรียนรู้', 'วิชา', 'ชั้น', 'ผู้นิเทศ', 'คะแนนเฉลี่ย (%)', 'ระดับผลการนิเทศ'];
+                    let csvContent = '\uFEFF' + headers.join(',') + '\n';
+
+                    res.data.forEach((r, idx) => {
+                        const row = [
+                            idx + 1,
+                            `"${formatDateThai(r.date).replace(/"/g, '""')}"`,
+                            `"${(r.year || '').toString().replace(/"/g, '""')}"`,
+                            `"${(r.term || '').toString().replace(/"/g, '""')}"`,
+                            `"${(r.teacher || '').toString().replace(/"/g, '""')}"`,
+                            `"${(r.department || '').toString().replace(/"/g, '""')}"`,
+                            `"${(r.subject || '').toString().replace(/"/g, '""')}"`,
+                            `"${(r.class || '').toString().replace(/"/g, '""')}"`,
+                            `"${(r.observer || '').toString().replace(/"/g, '""')}"`,
+                            `"${(r.percent || '0').toString().replace(/"/g, '""')}"`,
+                            `"${(r.level || '').toString().replace(/"/g, '""')}"`
+                        ];
+                        csvContent += row.join(',') + '\n';
+                    });
+
+                    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.setAttribute('download', `รายงานสรุปผู้บริหาร_ปี${fetchYear || 'ทั้งหมด'}_ภาคเรียน${fetchTerm || 'ทั้งหมด'}.csv`);
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                })
+                .catch(err => {
+                    Swal.close();
+                    Swal.fire('ข้อผิดพลาด', 'ไม่สามารถสร้างไฟล์ Excel ได้: ' + err.message, 'error');
+                });
+        }
+
+        function printExecutiveReport() {
+            const year = document.getElementById('analyticsYear') ? document.getElementById('analyticsYear').value : 'all';
+            const term = document.getElementById('analyticsTerm') ? document.getElementById('analyticsTerm').value : 'all';
+            
+            const targetUrl = typeof getNavUrl !== 'undefined'
+                ? getNavUrl('preview_executive', { year, term })
+                : `preview_executive.html?year=${year}&term=${term}`;
+                
+            window.open(targetUrl, '_blank');
         }
 
         window.showContactModal = function() {

@@ -585,11 +585,11 @@ function getReportData(ss, year, term) {
   
   // กรองตามปีและภาคเรียน (ถ้าส่งพารามิเตอร์มา)
   let filtered = records;
-  if(year && year !== "") {
-    filtered = filtered.filter(r => String(r.year) === String(year));
+  if (year && year !== "" && year !== "all") {
+    filtered = filtered.filter(r => String(r.year || "").trim() === String(year).trim());
   }
-  if(term && term !== "") {
-    filtered = filtered.filter(r => String(r.term) === String(term));
+  if (term && term !== "" && term !== "all") {
+    filtered = filtered.filter(r => String(r.term || "").trim() === String(term).trim());
   }
   
   return jsonResponse({ success: true, data: filtered });
@@ -712,7 +712,19 @@ function saveConfig(ss, input) {
   
   let id = input.id;
   const name = input.name;
-  const items = input.items || [];
+  
+  let items = [];
+  if (Array.isArray(input.items)) {
+    items = input.items;
+  } else if (input.items_json) {
+    try {
+      let parsed = typeof input.items_json === 'string' ? JSON.parse(input.items_json) : input.items_json;
+      if (typeof parsed === 'string') parsed = JSON.parse(parsed);
+      items = parsed.items || (Array.isArray(parsed) ? parsed : []);
+    } catch(e) {
+      console.error("Error parsing items_json:", e);
+    }
+  }
   
   if (id) {
     // อัปเดตเทมเพลตที่มีอยู่แล้ว
@@ -724,35 +736,43 @@ function saveConfig(ss, input) {
       }
     }
     
-    // ลบหัวข้อประเมินย่อยเดิม
-    const itemVals = itemsSheet.getDataRange().getValues();
-    for (let i = itemVals.length - 1; i >= 1; i--) {
-      if (String(itemVals[i][1]) === String(id)) {
-        itemsSheet.deleteRow(i + 1);
+    // ลบหัวข้อประเมินย่อยเดิมของ template_id นี้
+    if (itemsSheet) {
+      const itemVals = itemsSheet.getDataRange().getValues();
+      for (let i = itemVals.length - 1; i >= 1; i--) {
+        if (String(itemVals[i][1]) === String(id)) {
+          itemsSheet.deleteRow(i + 1);
+        }
       }
     }
   } else {
     // สร้างเทมเพลตใหม่
-    id = new Date().getTime();
-    templateSheet.appendRow([
-      id,
-      name,
-      Utilities.formatDate(new Date(), "GMT+7", "yyyy-MM-dd HH:mm:ss")
-    ]);
+    id = "TMP_" + new Date().getTime();
+    if (templateSheet) {
+      templateSheet.appendRow([
+        id,
+        name,
+        Utilities.formatDate(new Date(), "GMT+7", "yyyy-MM-dd HH:mm:ss")
+      ]);
+    }
   }
   
-  // บันทึกหัวข้อย่อยใหม่
-  items.forEach((item, index) => {
-    itemsSheet.appendRow([
-      new Date().getTime() + "_" + index,
-      id,
-      item.type || "sub",
-      item.text || "",
-      index
-    ]);
-  });
+  // บันทึกหัวข้อการประเมินลงในแผ่นงาน evaluation_items
+  if (itemsSheet) {
+    const timestamp = new Date().getTime();
+    items.forEach((item, index) => {
+      const itemId = item.id || ("ITEM_" + timestamp + "_" + (index + 1));
+      itemsSheet.appendRow([
+        itemId,
+        id,
+        item.type || "sub",
+        item.text || "",
+        item.sort_order !== undefined ? Number(item.sort_order) : index
+      ]);
+    });
+  }
   
-  return jsonResponse({ success: true, message: "บันทึกรูปแบบแบบประเมินเรียบร้อย" });
+  return jsonResponse({ success: true, message: "บันทึกรูปแบบและหัวข้อการประเมินลงตารางเรียบร้อย" });
 }
 // === การจัดการภาคเรียน (Academic Terms) ===
 function listTerms(ss) {
@@ -1104,22 +1124,28 @@ function sha256(input) {
 // === คำนวณข้อมูลสถิติ/สารสนเทศสำหรับหน้าวิเคราะห์ข้อมูล (Analytics) ===
 function getAnalyticsData(ss, year, term) {
   const records = getSheetData(ss, "supervision_records");
-  let filtered = records;
-  if(year && year !== "") {
-    filtered = filtered.filter(r => String(r.year) === String(year));
+  const users = getSheetData(ss, "users");
+  
+  // จำนวนครูทั้งหมดในระบบ
+  let teacherUsers = users.filter(u => String(u.role).toLowerCase() === "teacher" || String(u.role).toLowerCase() === "user" || String(u.role).toLowerCase() === "observer");
+  if (teacherUsers.length === 0 && users.length > 0) {
+    teacherUsers = users;
   }
-  if(term && term !== "") {
-    filtered = filtered.filter(r => String(r.term) === String(term));
+  const totalAllTeachersCount = teacherUsers.length;
+
+  let filtered = records;
+  if (year && year !== "" && year !== "all") {
+    filtered = filtered.filter(r => String(r.year || "").trim() === String(year).trim());
+  }
+  if (term && term !== "" && term !== "all") {
+    filtered = filtered.filter(r => String(r.term || "").trim() === String(term).trim());
   }
   
   const totalRecords = filtered.length;
-  
-  // นับจำนวนครูที่ได้รับการนิเทศ (ครูที่ไม่ซ้ำ)
   const uniqueTeachers = {};
   let totalPercentSum = 0;
   let validPercentCount = 0;
   
-  // นับระดับผลการประเมิน
   const levelsCount = {
     "ดีมาก": 0,
     "ดี": 0,
@@ -1127,23 +1153,33 @@ function getAnalyticsData(ss, year, term) {
     "ปรับปรุง": 0
   };
   
-  // สำหรับจับคู่กลุ่มสาระกับการคำนวณคะแนนเฉลี่ย
   const deptStats = {};
   
   filtered.forEach(r => {
-    // ครู
-    if (r.teacher) {
-      uniqueTeachers[r.teacher] = true;
+    // 1. ดึงชื่อครูผู้รับการนิเทศ (Teacher Name)
+    let teacherName = r.teacher || r.teacher_name || r.teacherId || r.teacher_id || r["ครูผู้รับการนิเทศ"] || r["ชื่อครู"] || r["ผู้รับการนิเทศ"];
+    if (!teacherName && typeof r === 'object') {
+      const keys = Object.keys(r);
+      if (keys.length >= 4 && r[keys[3]]) teacherName = r[keys[3]];
+    }
+    if (teacherName && String(teacherName).trim() !== "" && String(teacherName).trim() !== "-") {
+      uniqueTeachers[String(teacherName).trim()] = true;
     }
     
-    // เปอร์เซ็นต์คะแนน
-    const pct = parseFloat(r.percent);
+    // 2. ดึงคะแนนร้อยละ (Percent / Percentage)
+    let rawPct = r.percent !== undefined ? r.percent : (r.percentage !== undefined ? r.percentage : (r["คะแนนร้อยละ"] !== undefined ? r["คะแนนร้อยละ"] : r["ร้อยละ"]));
+    if (rawPct === undefined || rawPct === null || rawPct === "") {
+      if (r.total !== undefined && !isNaN(parseFloat(r.total))) {
+        rawPct = parseFloat(r.total);
+      }
+    }
+    
+    const pct = parseFloat(String(rawPct || 0).replace(/%/g, '').trim());
     if (!isNaN(pct)) {
       totalPercentSum += pct;
       validPercentCount++;
       
-      // กลุ่มสาระ
-      const dept = r.department || "ไม่ระบุ";
+      const dept = r.department || r.dept || r.group || r["กลุ่มสาระการเรียนรู้"] || r["กลุ่มสาระ"] || "ไม่ระบุ";
       if (!deptStats[dept]) {
         deptStats[dept] = { sum: 0, count: 0 };
       }
@@ -1151,30 +1187,34 @@ function getAnalyticsData(ss, year, term) {
       deptStats[dept].count += 1;
     }
     
-    // ระดับคุณภาพ
-    let lvl = String(r.level || "").trim();
-    // แมปปิ้งระดับคุณภาพเข้ากับ Chart (ดีมาก, ดี, พอใช้, ปรับปรุง)
+    let lvl = String(r.level || r.level_name || r["ระดับคุณภาพ"] || r["ระดับผลการประเมิน"] || "").trim();
     if (lvl === "ยอดเยี่ยม" || lvl === "ดีเลิศ" || lvl === "ดีมาก") {
       levelsCount["ดีมาก"]++;
     } else if (lvl === "ดี") {
       levelsCount["ดี"]++;
     } else if (lvl === "ปานกลาง" || lvl === "พอใช้") {
       levelsCount["พอใช้"]++;
-    } else if (lvl === "ควรพัฒนา" || lvl === "ปรับปรุง") {
+    } else if (lvl === "ควรพัฒนา" || lvl === "ปรับปรุง" || lvl === "ควรปรับปรุง" || lvl === "ไม่ผ่าน") {
       levelsCount["ปรับปรุง"]++;
     }
   });
   
-  const uniqueTeachersCount = Object.keys(uniqueTeachers).length;
-  const avgScore = validPercentCount > 0 ? (totalPercentSum / validPercentCount).toFixed(2) : "0.00";
+  const supervisedTeachersCount = Object.keys(uniqueTeachers).length;
+  const allTeachersCount = Math.max(totalAllTeachersCount, supervisedTeachersCount);
   
-  // แปลง levelsCount เป็น Array
+  const supervisedRate = allTeachersCount > 0 
+    ? ((supervisedTeachersCount / allTeachersCount) * 100).toFixed(1) 
+    : "0.0";
+    
+  const avgScore = validPercentCount > 0 
+    ? (totalPercentSum / validPercentCount).toFixed(2) 
+    : (totalRecords > 0 && totalPercentSum > 0 ? (totalPercentSum / totalRecords).toFixed(2) : "0.00");
+  
   const levelsArray = Object.entries(levelsCount).map(([level, count]) => ({
     level: level,
     count: count
   }));
   
-  // แปลง deptStats เป็น Array
   const deptArray = Object.entries(deptStats).map(([dept, stat]) => ({
     department: dept,
     avg_score: (stat.sum / stat.count).toFixed(2)
@@ -1183,7 +1223,9 @@ function getAnalyticsData(ss, year, term) {
   const responseData = {
     overview: {
       total_records: totalRecords,
-      total_teachers: uniqueTeachersCount,
+      total_all_teachers: allTeachersCount,
+      supervised_teachers: supervisedTeachersCount,
+      supervised_rate: supervisedRate,
       avg_score: avgScore
     },
     levels: levelsArray,

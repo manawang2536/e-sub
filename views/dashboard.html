@@ -972,18 +972,32 @@
         function loadConfig() {
             const tbody = document.getElementById('eval-table-body');
             if (tbody && typeof getSkeletonRows === 'function') tbody.innerHTML = getSkeletonRows(7, 5);
-            fetch('../api/api.php?action=getConfig')
-                .then(response => {
-                    if (!response.ok) throw new Error('เกิดข้อผิดพลาดในการโหลดการตั้งค่า');
-                    return response.json();
-                })
+            
+            // โหลดเทมเพลตเริ่มต้น (Template 1 หรือ Template แรกที่มีในระบบ)
+            fetch('../api/templates.php?action=list')
+                .then(r => r.json())
                 .then(res => {
-                    configData = res;
-                    if (!configData.items || configData.items.length === 0) {
-                        configData.items = [
+                    let firstTmplId = 1;
+                    if (res && res.success && res.templates && res.templates.length > 0) {
+                        firstTmplId = res.templates[0].id;
+                    }
+                    return fetch('../api/templates.php?action=get&id=' + firstTmplId);
+                })
+                .then(r => r.json())
+                .then(res => {
+                    if (res && res.success && res.template) {
+                        try {
+                            configData = JSON.parse(res.template.items_json);
+                            if (typeof configData === 'string') configData = JSON.parse(configData);
+                        } catch(e) {
+                            configData = { items: [] };
+                        }
+                    }
+                    if (!configData || !configData.items || configData.items.length === 0) {
+                        configData = { items: [
                             { id: generateId(), type: 'main', text: 'ด้านการเตรียมการสอน' },
                             { id: generateId(), type: 'sub', text: 'มีแผนการจัดการเรียนรู้ที่สอดคล้องกับตัวชี้วัด' }
-                        ];
+                        ]};
                     }
                     // ถ้าเปิดหน้า config อยู่ให้โหลดใหม่
                     const vSet = document.getElementById('view-settings');
@@ -996,7 +1010,9 @@
                         renderEvalTable();
                     }
                 })
-                .catch(err => console.error("โหลดการตั้งค่าล้มเหลว:", err));
+                .catch(err => {
+                    console.error("โหลดการตั้งค่าล้มเหลว:", err);
+                });
         }
 
         function generateId() { return 'item_' + Math.random().toString(36).substr(2, 9); }
@@ -1020,7 +1036,7 @@
                         <div class="cursor-move text-gray-300 mr-3"><i class="fas fa-grip-vertical"></i></div>
                         ${icon}
                         <input type="text" class="flex-grow border-b border-gray-200 focus:outline-none focus:border-school bg-transparent px-2 py-1 ${isMain ? 'font-bold text-school' : 'text-gray-700'}" 
-                               value="${item.text}" onchange="updateConfigText('${item.id}', this.value)" placeholder="${isMain ? 'ระบุหัวข้อหลัก' : 'ระบุหัวข้อย่อย'}">
+                               value="${item.text}" oninput="updateConfigText('${item.id}', this.value)" onchange="updateConfigText('${item.id}', this.value)" placeholder="${isMain ? 'ระบุหัวข้อหลัก' : 'ระบุหัวข้อย่อย'}">
                         <button onclick="removeConfigItem('${item.id}')" class="text-red-400 hover:text-red-600 ml-4 transition"><i class="fas fa-trash"></i></button>
                     </div>
                 `;
@@ -1400,26 +1416,99 @@ function saveConfigOriginal() {
             
             const reader = new FileReader();
             reader.onload = function(e) {
-                const text = e.target.result;
+                const buffer = e.target.result;
+                
+                // 1. ถอดรหัสทั้ง UTF-8 และ Windows-874 (TIS-620)
+                let textUtf8 = '';
+                let textThai = '';
+                let hasUtf8Error = false;
+                
+                try {
+                    const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
+                    textUtf8 = utf8Decoder.decode(buffer);
+                } catch (err) {
+                    hasUtf8Error = true;
+                    try {
+                        textUtf8 = new TextDecoder('utf-8').decode(buffer);
+                    } catch(e) {}
+                }
+
+                try {
+                    const thaiDecoder = new TextDecoder('windows-874');
+                    textThai = thaiDecoder.decode(buffer);
+                } catch (e2) {
+                    try {
+                        const tisDecoder = new TextDecoder('tis-620');
+                        textThai = tisDecoder.decode(buffer);
+                    } catch (e3) {}
+                }
+
+                // 2. เลือกผลลัพธ์ที่มีตัวอักษรภาษาไทยที่ถูกต้องมากที่สุด
+                let text = '';
+                if (hasUtf8Error || !textUtf8 || textUtf8.includes('\uFFFD')) {
+                    text = textThai || textUtf8;
+                } else {
+                    const thaiInUtf8 = (textUtf8.match(/[\u0E00-\u0E7F]/g) || []).length;
+                    const thaiInThai = (textThai.match(/[\u0E00-\u0E7F]/g) || []).length;
+                    
+                    if (thaiInThai > thaiInUtf8) {
+                        text = textThai;
+                    } else {
+                        text = textUtf8;
+                    }
+                }
+
                 let parsedUsers = [];
                 try {
+                    // แยกบรรทัด
                     const lines = text.split(/\r?\n/);
                     if (lines.length <= 1) throw new Error('ไฟล์ว่างเปล่าหรือไม่มีข้อมูล');
                     
+                    // ฟังก์ชันแยกคอลัมน์ CSV รองรับเครื่องหมายคำพูด (Quote)
+                    function parseCSVRow(rowStr) {
+                        const res = [];
+                        let cur = '';
+                        let inQuote = false;
+                        for (let i = 0; i < rowStr.length; i++) {
+                            const c = rowStr[i];
+                            if (c === '"') {
+                                if (inQuote && rowStr[i + 1] === '"') {
+                                    cur += '"';
+                                    i++;
+                                } else {
+                                    inQuote = !inQuote;
+                                }
+                            } else if (c === ',' && !inQuote) {
+                                res.push(cur.trim());
+                                cur = '';
+                            } else {
+                                cur += c;
+                            }
+                        }
+                        res.push(cur.trim());
+                        return res;
+                    }
+
                     // ล้างอักขระพิเศษ (เช่น BOM)
-                    const headers = lines[0].split(',').map(h => h.trim().replace(/[\uFEFF\r\n]/g, ''));
+                    const headers = parseCSVRow(lines[0]).map(h => h.trim().replace(/[\uFEFF\r\n"]/g, ''));
                     
                     for (let i = 1; i < lines.length; i++) {
                         const line = lines[i].trim();
                         if (!line) continue;
                         
-                        const cols = line.split(',').map(c => c.trim());
+                        const cols = parseCSVRow(line);
                         const userObj = {};
                         
                         headers.forEach((header, idx) => {
                             let key = header.toLowerCase();
-                            if (key === 'displayname') key = 'display_name';
-                            userObj[key] = cols[idx] || '';
+                            if (key === 'displayname' || key === 'ชื่อ-สกุล' || key === 'ชื่อผู้ใช้งาน' || key === 'ชื่อ') key = 'display_name';
+                            if (key === 'อีเมล') key = 'email';
+                            if (key === 'บทบาท' || key === 'สิทธิ์') key = 'role';
+                            if (key === 'ตำแหน่ง') key = 'position';
+                            if (key === 'วิทยฐานะ') key = 'academic_standing';
+                            if (key === 'กลุ่มสาระ' || key === 'กลุ่มสาระการเรียนรู้' || key === 'ฝ่าย') key = 'department';
+                            
+                            userObj[key] = (cols[idx] || '').replace(/^"|"$/g, '').trim();
                         });
                         
                         if (userObj.username && userObj.password) {
@@ -1432,6 +1521,12 @@ function saveConfigOriginal() {
                     return;
                 }
                 
+                if (parsedUsers.length === 0) {
+                    Swal.fire('ข้อผิดพลาด', 'ไม่พบข้อมูลผู้ใช้ที่ถูกต้องในไฟล์ (ต้องมีคอลัมน์ username และ password)', 'warning');
+                    event.target.value = '';
+                    return;
+                }
+
                 fetch('../api/import_users.php', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1460,8 +1555,8 @@ function saveConfigOriginal() {
                 event.target.value = '';
             };
             
-            // อ่านไฟล์แบบ UTF-8 รองรับภาษาไทย
-            reader.readAsText(file, 'UTF-8');
+            // อ่านแบบ ArrayBuffer เพื่อตรวจจับ UTF-8 / Windows-874 ภาษาไทยอัตโนมัติ
+            reader.readAsArrayBuffer(file);
         }
 
         let usersPaginator = null;
@@ -1999,6 +2094,20 @@ function saveConfigOriginal() {
                 return;
             }
 
+            // ซิงค์ข้อความล่าสุดจาก DOM input ทุกช่องเข้า configData ก่อนส่ง
+            const container = document.getElementById('config-container');
+            if (container && configData && configData.items) {
+                const inputs = container.querySelectorAll('input[type="text"]');
+                inputs.forEach(inp => {
+                    const row = inp.closest('[data-id]');
+                    if (row) {
+                        const itemId = row.getAttribute('data-id');
+                        const item = configData.items.find(i => String(i.id) === String(itemId));
+                        if (item) item.text = inp.value;
+                    }
+                });
+            }
+
             Swal.fire({ title: 'กำลังบันทึก...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
             
             let itemsArr = [];
@@ -2021,6 +2130,10 @@ function saveConfigOriginal() {
             .then(res => res.json())
             .then(res => {
                 if (res.success) {
+                    // ล้างแคช API ในฝั่ง Client
+                    Object.keys(sessionStorage).forEach(key => { if (key.startsWith('gas_cache_')) sessionStorage.removeItem(key); });
+                    Object.keys(localStorage).forEach(key => { if (key.startsWith('gas_cache_')) localStorage.removeItem(key); });
+
                     Swal.fire('สำเร็จ', res.message, 'success').then(() => {
                         closeTemplateEditor();
                         loadSettingsTemplatesList();

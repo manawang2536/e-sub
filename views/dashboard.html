@@ -194,10 +194,12 @@
 
                 const isGetRequest = (!config || !config.method || config.method.toUpperCase() === 'GET');
                 const isStats = gasAction === 'getStats' || gasAction === 'getDashboardStats';
+                const uncacheableActions = ['listTerms', 'listTemplates', 'getTemplate', 'listUsers', 'listAssignments', 'listLogs', 'getReportById'];
+                const shouldSkipCache = uncacheableActions.includes(gasAction) || urlObj.searchParams.has('_t');
                 const storage = isStats ? localStorage : sessionStorage;
                 const cacheKey = 'gas_cache_v2_' + btoa(encodeURIComponent(gasUrl)).replace(/=/g, '');
 
-                if (isGetRequest) {
+                if (isGetRequest && !shouldSkipCache) {
                     const cachedStr = storage.getItem(cacheKey);
 
                     if (cachedStr) {
@@ -217,10 +219,10 @@
                         }).catch(()=>{});
                         return Promise.resolve(new Response(cachedStr, { status: 200, headers: { 'Content-Type': 'application/json' }}));
                     }
-                } else {
+                } else if (!isGetRequest) {
                     // หากมีการเขียน/แก้ไขข้อมูล ให้ล้าง Cache ทั้งหมดเพื่อให้ข้อมูลอัปเดต
-                    Object.keys(sessionStorage).forEach(key => { if (key.startsWith('gas_cache_')) sessionStorage.removeItem(key); });
-                    Object.keys(localStorage).forEach(key => { if (key.startsWith('gas_cache_')) localStorage.removeItem(key); });
+                    Object.keys(sessionStorage).forEach(key => { if (key.startsWith('gas_cache')) sessionStorage.removeItem(key); });
+                    Object.keys(localStorage).forEach(key => { if (key.startsWith('gas_cache')) localStorage.removeItem(key); });
                 }
 
                 return originalFetch(gasUrl, gasConfig).then(response => {
@@ -1989,7 +1991,7 @@ function saveConfigOriginal() {
             if (!tbody) return;
             tbody.innerHTML = getSkeletonRows(2, 3);
             
-            fetch('../api/templates.php?action=list')
+            fetch('../api/templates.php?action=list&_t=' + Date.now())
                 .then(res => res.json())
                 .then(res => {
                     if (res.success) {
@@ -2163,11 +2165,13 @@ function saveConfigOriginal() {
                     fetch('../api/templates.php?action=delete', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ id: id })
+                        body: JSON.stringify({ id: String(id) })
                     })
                     .then(res => res.json())
                     .then(res => {
                         if (res.success) {
+                            Object.keys(sessionStorage).forEach(key => { if (key.startsWith('gas_cache')) sessionStorage.removeItem(key); });
+                            Object.keys(localStorage).forEach(key => { if (key.startsWith('gas_cache')) localStorage.removeItem(key); });
                             Swal.fire('ลบแล้ว!', res.message, 'success');
                             loadSettingsTemplatesList();
                         } else {
@@ -2383,23 +2387,25 @@ function saveConfigOriginal() {
             const tbody = document.getElementById('terms-table-body');
             if (tbody) tbody.innerHTML = getSkeletonRows(4, 3);
             
-            fetch('../api/terms.php?action=list')
+            fetch('../api/terms.php?action=list&_t=' + Date.now())
                 .then(res => res.json())
                 .then(res => {
                     if (res.success) {
                         if (!tbody) return;
                         tbody.innerHTML = '';
-                        if (res.data.length === 0) {
+                        if (!res.data || res.data.length === 0) {
                             tbody.innerHTML = '<tr><td colspan="4" class="py-4 text-gray-500">ยังไม่มีข้อมูลภาคเรียน</td></tr>';
                             return;
                         }
                         res.data.forEach(t => {
-                            const badge = t.is_active == 1 
+                            const isAct = String(t.is_active).trim().toLowerCase();
+                            const isActive = (isAct === '1' || isAct === 'true' || isAct === 'yes');
+                            const badge = isActive
                                 ? '<span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full"><i class="fas fa-check-circle mr-1"></i>ปัจจุบัน</span>'
                                 : '<span class="bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-full">ไม่ได้ใช้</span>';
-                            const btnActive = t.is_active == 1 
+                            const btnActive = isActive 
                                 ? '' 
-                                : `<button onclick="setActiveTerm(${t.id})" class="text-blue-500 hover:text-blue-700 mx-1" title="ตั้งเป็นปัจจุบัน"><i class="fas fa-check"></i></button>`;
+                                : `<button onclick="setActiveTerm('${t.id}')" class="text-blue-500 hover:text-blue-700 mx-1" title="ตั้งเป็นปัจจุบัน"><i class="fas fa-check"></i></button>`;
                             
                             tbody.innerHTML += `
                                 <tr class="hover:bg-blue-50">
@@ -2408,7 +2414,7 @@ function saveConfigOriginal() {
                                     <td class="px-6 py-4">${badge}</td>
                                     <td class="px-6 py-4">
                                         ${btnActive}
-                                        <button onclick="deleteTerm(${t.id})" class="text-red-500 hover:text-red-700 mx-1"><i class="fas fa-trash"></i></button>
+                                        <button onclick="deleteTerm('${t.id}')" class="text-red-500 hover:text-red-700 mx-1" title="ลบ"><i class="fas fa-trash"></i></button>
                                     </td>
                                 </tr>
                             `;
@@ -2444,6 +2450,8 @@ function saveConfigOriginal() {
             .then(res => res.json())
             .then(res => {
                 if (res.success) {
+                    Object.keys(sessionStorage).forEach(key => { if (key.startsWith('gas_cache')) sessionStorage.removeItem(key); });
+                    Object.keys(localStorage).forEach(key => { if (key.startsWith('gas_cache')) localStorage.removeItem(key); });
                     Swal.fire('สำเร็จ', res.message, 'success');
                     closeTermModal();
                     loadTerms();
@@ -2459,11 +2467,13 @@ function saveConfigOriginal() {
             fetch('../api/terms.php?action=set_active', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id })
+                body: JSON.stringify({ id: String(id) })
             })
             .then(res => res.json())
             .then(res => {
                 if (res.success) {
+                    Object.keys(sessionStorage).forEach(key => { if (key.startsWith('gas_cache')) sessionStorage.removeItem(key); });
+                    Object.keys(localStorage).forEach(key => { if (key.startsWith('gas_cache')) localStorage.removeItem(key); });
                     Swal.fire('สำเร็จ', res.message, 'success');
                     loadTerms();
                 } else {
@@ -2488,11 +2498,13 @@ function saveConfigOriginal() {
                     fetch('../api/terms.php?action=delete', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ id })
+                        body: JSON.stringify({ id: String(id) })
                     })
                     .then(res => res.json())
                     .then(res => {
                         if (res.success) {
+                            Object.keys(sessionStorage).forEach(key => { if (key.startsWith('gas_cache')) sessionStorage.removeItem(key); });
+                            Object.keys(localStorage).forEach(key => { if (key.startsWith('gas_cache')) localStorage.removeItem(key); });
                             Swal.fire('สำเร็จ', res.message, 'success');
                             loadTerms();
                         } else {

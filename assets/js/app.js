@@ -1449,11 +1449,13 @@ function saveConfigOriginal() {
                     fetch('../api/templates.php?action=delete', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ id: id })
+                        body: JSON.stringify({ id: String(id) })
                     })
                     .then(res => res.json())
                     .then(res => {
                         if (res.success) {
+                            Object.keys(sessionStorage).forEach(key => { if (key.startsWith('gas_cache')) sessionStorage.removeItem(key); });
+                            Object.keys(localStorage).forEach(key => { if (key.startsWith('gas_cache')) localStorage.removeItem(key); });
                             Swal.fire('ลบแล้ว!', res.message, 'success');
                             loadSettingsTemplatesList();
                         } else {

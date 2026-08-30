@@ -2775,7 +2775,10 @@ function saveConfigOriginal() {
             tbody.innerHTML = '';
             
             if (!configData || !configData.items || configData.items.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-red-500">ไม่พบข้อมูลแบบประเมิน กรุณาตั้งค่าก่อนใช้งาน (' + JSON.stringify(configData) + ')</td></tr>';
+                if (typeof loadConfig === 'function') {
+                    loadConfig();
+                }
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-blue-500"><i class="fas fa-spinner fa-spin mr-2"></i> กำลังโหลดข้อมูลแบบประเมิน...</td></tr>';
                 return;
             }
 
@@ -3026,30 +3029,34 @@ function saveConfigOriginal() {
                     const tInfo = formTeachersList.find(x => x.id == data.teacher_id || x.display_name === data.teacher || x.username === data.teacher);
                     const templateId = tInfo ? tInfo.template_id : null;
                     
+                    let targetTemplateId = templateId;
                     let configPromise;
-                    if (templateId) {
-                        configPromise = fetch('../api/templates.php?action=get&id=' + templateId).then(r => r.json());
+                    if (targetTemplateId) {
+                        configPromise = fetch('../api/templates.php?action=get&id=' + targetTemplateId).then(r => r.json());
                     } else {
-                        configPromise = fetch('../api/api.php?action=getConfig').then(r => r.json());
+                        configPromise = fetch('../api/templates.php?action=list')
+                            .then(r => r.json())
+                            .then(lRes => {
+                                const firstId = (lRes && lRes.success && lRes.templates && lRes.templates.length > 0) ? lRes.templates[0].id : 1;
+                                return fetch('../api/templates.php?action=get&id=' + firstId).then(r => r.json());
+                            });
                     }
                     
                     configPromise.then(configRes => {
                         // Parse template config
-                        if (templateId) {
-                            if (configRes.success) {
-                                try {
-                                    configData = JSON.parse(configRes.template.items_json);
-                                    if (typeof configData === 'string') configData = JSON.parse(configData);
-                                } catch(e) {
-                                    configData = { items: [] };
-                                }
-                            }
-                        } else {
-                            if (configRes.items) {
-                                configData = configRes;
-                            } else {
+                        if (configRes && configRes.success && configRes.template) {
+                            try {
+                                configData = JSON.parse(configRes.template.items_json);
+                                if (typeof configData === 'string') configData = JSON.parse(configData);
+                            } catch(e) {
                                 configData = { items: [] };
                             }
+                        }
+                        if (!configData || !configData.items || configData.items.length === 0) {
+                            configData = { items: [
+                                { id: generateId(), type: 'main', text: 'ด้านการเตรียมการสอน' },
+                                { id: generateId(), type: 'sub', text: 'มีแผนการจัดการเรียนรู้ที่สอดคล้องกับตัวชี้วัด' }
+                            ]};
                         }
                         
                         renderEditEvalTable();

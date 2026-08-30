@@ -1583,22 +1583,29 @@ function saveConfigOriginal() {
                         const teacherObj = formTeachersList.find(t => t.id == data.teacher_id);
                         const templateId = teacherObj ? teacherObj.template_id : null;
                         
+                        let targetTemplateId = templateId;
                         let configPromise;
-                        if (templateId) {
-                            configPromise = fetch('../api/templates.php?action=get&id=' + templateId).then(r => r.json());
+                        if (targetTemplateId) {
+                            configPromise = fetch('../api/templates.php?action=get&id=' + targetTemplateId).then(r => r.json());
                         } else {
-                            configPromise = fetch('../api/api.php?action=getConfig').then(r => r.json());
+                            configPromise = fetch('../api/templates.php?action=list')
+                                .then(r => r.json())
+                                .then(lRes => {
+                                    const firstId = (lRes && lRes.success && lRes.templates && lRes.templates.length > 0) ? lRes.templates[0].id : 1;
+                                    return fetch('../api/templates.php?action=get&id=' + firstId).then(r => r.json());
+                                });
                         }
                         
                         configPromise.then(cRes => {
-                            if (templateId) {
-                                if (cRes.success) {
-                                    try { configData = JSON.parse(cRes.template.items_json); } 
-                                    catch(e) { configData = { items: [] }; }
-                                }
-                            } else {
-                                if (cRes.success && cRes.data) configData = cRes.data;
-                                else configData = { items: [] };
+                            if (cRes && cRes.success && cRes.template) {
+                                try { configData = JSON.parse(cRes.template.items_json); } 
+                                catch(e) { configData = { items: [] }; }
+                            }
+                            if (!configData || !configData.items || configData.items.length === 0) {
+                                configData = { items: [
+                                    { id: generateId(), type: 'main', text: 'ด้านการเตรียมการสอน' },
+                                    { id: generateId(), type: 'sub', text: 'มีแผนการจัดการเรียนรู้ที่สอดคล้องกับตัวชี้วัด' }
+                                ]};
                             }
                             renderEvalTable();
                             

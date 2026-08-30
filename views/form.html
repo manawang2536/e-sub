@@ -64,14 +64,19 @@
                             <option value="ปฐมวัย">ปฐมวัย</option>
                         </select>
                     </div>
-                    <div>
+                    <div class="lg:col-span-2">
                         <label class="block text-sm font-medium text-school mb-1">วิชาที่สอน</label>
-                        <input type="text" id="f_subject" required
+                        <input type="text" id="f_subject" required placeholder="เช่น วิทยาการคำนวณ"
                             class="w-full border-blue-200 rounded-md shadow-sm border p-2 focus:ring-school focus:border-school outline-none transition">
                     </div>
-                    <div>
+                    <div class="lg:col-span-3">
+                        <label class="block text-sm font-medium text-school mb-1">เรื่องที่สอน</label>
+                        <input type="text" id="f_topic" required placeholder="ระบุเรื่อง/หัวข้อที่สอน"
+                            class="w-full border-blue-200 rounded-md shadow-sm border p-2 focus:ring-school focus:border-school outline-none transition">
+                    </div>
+                    <div class="lg:col-span-1">
                         <label class="block text-sm font-medium text-school mb-1">ชั้น</label>
-                        <input type="text" id="f_class" required
+                        <input type="text" id="f_class" required placeholder="เช่น ม.1/1"
                             class="w-full border-blue-200 rounded-md shadow-sm border p-2 focus:ring-school focus:border-school outline-none transition">
                     </div>
 

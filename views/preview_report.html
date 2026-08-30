@@ -225,6 +225,12 @@
                 let scoresRaw = record.scores_json || record.scores || '{}';
                 if (typeof scoresRaw === 'object') scoresRaw = JSON.stringify(scoresRaw);
                 const recordScores = JSON.parse(scoresRaw) || {};
+                
+                if (!record.topic && !record.lesson && recordScores) {
+                    record.topic = recordScores._topic || recordScores.topic || '';
+                    record.lesson = record.topic;
+                }
+                
                 let sequentialScores = Object.values(recordScores).map(v => parseInt(v));
                 
                 let currentGroupKey = '';
@@ -574,12 +580,13 @@
 
                     <div style="font-size: 10.5pt; margin-bottom: 12px; padding: 8px 14px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px;">
                         <div style="display: grid; grid-template-columns: 1.5fr 1fr; gap: 4px 15px;">
-                            <div><strong>ผู้รับการนิเทศ:</strong> ${record.teacher || '-'} (${record.teacher_pos || 'ครู'})</div>
+                            <div><strong>ผู้รับการนิเทศ:</strong> ${record.teacher || '-'} (${record.teacher_pos || record.teacher_position || 'ครู'})</div>
                             <div><strong>ระดับชั้น:</strong> ${record.class || '-'}</div>
                             <div><strong>กลุ่มสาระการเรียนรู้:</strong> ${record.department || '-'}</div>
                             <div><strong>วิชาที่สอน:</strong> ${record.subject || '-'}</div>
-                            <div><strong>ผู้นิเทศ:</strong> ${record.observer || '-'} (${record.observer_pos || 'ผู้นิเทศ'})</div>
+                            <div><strong>เรื่องที่สอน:</strong> ${record.topic || record.lesson || '-'}</div>
                             <div><strong>วันที่รับการนิเทศ:</strong> ${formatDateThai(record.date)}</div>
+                            <div style="grid-column: span 2;"><strong>ผู้นิเทศ:</strong> ${record.observer || '-'} (${record.observer_pos || record.observer_position || 'ผู้นิเทศ'})</div>
                         </div>
                     </div>
 

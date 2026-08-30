@@ -541,6 +541,8 @@ function saveConfigOriginal() {
                 teacherId: teacherId,
                 department: document.getElementById('f_department').value,
                 subject: document.getElementById('f_subject').value,
+                topic: document.getElementById('f_topic') ? document.getElementById('f_topic').value : '',
+                lesson: document.getElementById('f_topic') ? document.getElementById('f_topic').value : '',
                 className: document.getElementById('f_class').value,
                 date: document.getElementById('f_date').value,
                 time: document.getElementById('f_time').value,
@@ -1556,6 +1558,16 @@ function saveConfigOriginal() {
                         
                         document.getElementById('f_department').value = data.department || '';
                         document.getElementById('f_subject').value = data.subject || '';
+                        if (document.getElementById('f_topic')) {
+                            let topVal = data.topic || data.lesson || '';
+                            if (!topVal && data.scores) {
+                                try {
+                                    const scObj = typeof data.scores === 'string' ? JSON.parse(data.scores) : data.scores;
+                                    if (scObj && (scObj._topic || scObj.topic)) topVal = scObj._topic || scObj.topic;
+                                } catch(e) {}
+                            }
+                            document.getElementById('f_topic').value = topVal;
+                        }
                         document.getElementById('f_class').value = data.class || '';
                         document.getElementById('f_date').value = data.date ? (data.date.includes('T') ? data.date.split('T')[0] : data.date) : '';
                         document.getElementById('f_time').value = data.time || '';

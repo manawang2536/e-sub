@@ -1190,6 +1190,8 @@ function saveConfigOriginal() {
                 teacherId: document.getElementById('f_teacher').value,
                 department: document.getElementById('f_department').value,
                 subject: document.getElementById('f_subject').value,
+                topic: document.getElementById('f_topic') ? document.getElementById('f_topic').value : '',
+                lesson: document.getElementById('f_topic') ? document.getElementById('f_topic').value : '',
                 className: document.getElementById('f_class').value,
                 date: document.getElementById('f_date').value,
                 time: document.getElementById('f_time').value,
@@ -2891,6 +2893,8 @@ function saveConfigOriginal() {
                 teacherId: document.getElementById('ef_teacher').value,
                 department: document.getElementById('ef_department').value,
                 subject: document.getElementById('ef_subject').value,
+                topic: document.getElementById('ef_topic') ? document.getElementById('ef_topic').value : '',
+                lesson: document.getElementById('ef_topic') ? document.getElementById('ef_topic').value : '',
                 className: document.getElementById('ef_class').value,
                 date: document.getElementById('ef_date').value,
                 time: document.getElementById('ef_time').value,
@@ -3071,6 +3075,16 @@ function saveConfigOriginal() {
 
                         setSelectValueSafely('ef_department', data.department);
                         document.getElementById('ef_subject').value = data.subject || '';
+                        if (document.getElementById('ef_topic')) {
+                            let topVal = data.topic || data.lesson || '';
+                            if (!topVal && data.scores) {
+                                try {
+                                    const scObj = typeof data.scores === 'string' ? JSON.parse(data.scores) : data.scores;
+                                    if (scObj && (scObj._topic || scObj.topic)) topVal = scObj._topic || scObj.topic;
+                                } catch(e) {}
+                            }
+                            document.getElementById('ef_topic').value = topVal;
+                        }
                         document.getElementById('ef_class').value = data.class || '';
                         document.getElementById('ef_date').value = formatDateForInput(data.date);
                         document.getElementById('ef_time').value = data.time || '';
